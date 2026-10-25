@@ -963,5 +963,17 @@
   "preferred": "Preferred",
   "addToLocalProxies": "Add to local proxies",
   "addedToLocalProxies": "Added {name} to local proxies",
-  "alreadyInLocalProxies": "{name} is already in local proxies"
+  "alreadyInLocalProxies": "{name} is already in local proxies",
+  "mitmRewrite": "MITM Rewrite",
+  "mitmEnable": "Enable MITM",
+  "mitmEnableDesc": "Intercept HTTPS traffic and rewrite matching requests to block ads and trackers.",
+  "mitmRules": "Rewrite rules",
+  "mitmRulesEmpty": "No rules yet",
+  "mitmRulesCount": "{count, plural, =1{1 rule} other{{count} rules}}",
+  "mitmCertificate": "CA certificate",
+  "mitmCertificateDesc": "Copy the root certificate to install and trust on this device.",
+  "mitmCaInstallHint": "Install and trust the CA certificate so intercepted HTTPS requests do not show a warning. On Android 7+ install it into the user certificate store.",
+  "mitmCertCopied": "Certificate copied to clipboard",
+  "mitmCertError": "Failed to get certificate"
+
 }

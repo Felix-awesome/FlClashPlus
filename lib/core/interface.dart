@@ -114,6 +114,12 @@ mixin CoreInterface {
   FutureOr<bool> resetConnections();
 
   FutureOr<bool> clearDnsCache();
+
+  Future<String> setMitm(SetMitmParams params);
+
+  Future<String> getMitmCertificate();
+
+  Future<String> updateMitmRules(String rules);
 }
 
 abstract class CoreHandlerInterface with CoreInterface {
@@ -518,6 +524,24 @@ abstract class CoreHandlerInterface with CoreInterface {
   @override
   Future<bool> clearDnsCache() async {
     return await _invokeMethod<bool>(method: CoreMethod.clearDnsCache) ?? false;
+  }
+
+  @override
+  Future<String> setMitm(SetMitmParams params) async {
+    return _invokeMessage(method: CoreMethod.setMitm, arguments: params.toJson());
+  }
+
+  @override
+  Future<String> getMitmCertificate() async {
+    return _invokeMessage(method: CoreMethod.getMitmCertificate);
+  }
+
+  @override
+  Future<String> updateMitmRules(String rules) async {
+    return _invokeMessage(
+      method: CoreMethod.updateMitmRules,
+      arguments: {rules: rules},
+    );
   }
 
   @override

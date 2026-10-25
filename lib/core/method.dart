@@ -54,6 +54,9 @@ enum CoreMethod {
   updateDns,
   watchRoute,
   checkRoutes,
+  setMitm,
+  getMitmCertificate,
+  updateMitmRules,
 }
 
 class CoreMethodCall {

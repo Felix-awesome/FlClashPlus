@@ -7943,8 +7943,7 @@ class AppLocalizations {
   String customImportDroppedSubRules(num count, Object label) {
     return Intl.plural(
       count,
-      one:
-          '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
+      one: '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
       other:
           '$label SUB-RULE rules were dropped, since custom profiles do not support sub-rules',
       name: 'customImportDroppedSubRules',
@@ -8050,6 +8049,108 @@ class AppLocalizations {
       name: 'alreadyInLocalProxies',
       desc: '',
       args: [name],
+    );
+  }
+
+  /// `MITM Rewrite`
+  String get mitmRewrite {
+    return Intl.message(
+      'MITM Rewrite',
+      name: 'mitmRewrite',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Enable MITM`
+  String get mitmEnable {
+    return Intl.message('Enable MITM', name: 'mitmEnable', desc: '', args: []);
+  }
+
+  /// `Intercept HTTPS traffic and rewrite matching requests to block ads and trackers.`
+  String get mitmEnableDesc {
+    return Intl.message(
+      'Intercept HTTPS traffic and rewrite matching requests to block ads and trackers.',
+      name: 'mitmEnableDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Rewrite rules`
+  String get mitmRules {
+    return Intl.message('Rewrite rules', name: 'mitmRules', desc: '', args: []);
+  }
+
+  /// `No rules yet`
+  String get mitmRulesEmpty {
+    return Intl.message(
+      'No rules yet',
+      name: 'mitmRulesEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count, plural, =1{1 rule} other{{count} rules}}`
+  String mitmRulesCount(num count) {
+    return Intl.plural(
+      count,
+      one: '1 rule',
+      other: '$count rules',
+      name: 'mitmRulesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `CA certificate`
+  String get mitmCertificate {
+    return Intl.message(
+      'CA certificate',
+      name: 'mitmCertificate',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Copy the root certificate to install and trust on this device.`
+  String get mitmCertificateDesc {
+    return Intl.message(
+      'Copy the root certificate to install and trust on this device.',
+      name: 'mitmCertificateDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Install and trust the CA certificate so intercepted HTTPS requests do not show a warning. On Android 7+ install it into the user certificate store.`
+  String get mitmCaInstallHint {
+    return Intl.message(
+      'Install and trust the CA certificate so intercepted HTTPS requests do not show a warning. On Android 7+ install it into the user certificate store.',
+      name: 'mitmCaInstallHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Certificate copied to clipboard`
+  String get mitmCertCopied {
+    return Intl.message(
+      'Certificate copied to clipboard',
+      name: 'mitmCertCopied',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed to get certificate`
+  String get mitmCertError {
+    return Intl.message(
+      'Failed to get certificate',
+      name: 'mitmCertError',
+      desc: '',
+      args: [],
     );
   }
 }

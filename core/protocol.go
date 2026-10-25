@@ -66,6 +66,9 @@ const (
 	clearEffectMethod              CoreMethod = "clearEffect"
 	watchRouteMethod               CoreMethod = "watchRoute"
 	checkRoutesMethod              CoreMethod = "checkRoutes"
+	setMitmMethod                  CoreMethod = "setMitm"
+	getMitmCertificateMethod       CoreMethod = "getMitmCertificate"
+	updateMitmRulesMethod          CoreMethod = "updateMitmRules"
 )
 
 type MessageType string
@@ -265,4 +268,23 @@ type GeoUpdateStatus struct {
 	Updating bool   `json:"updating"`
 	Skipped  bool   `json:"skipped,omitempty"`
 	Error    string `json:"error,omitempty"`
+}
+
+
+// SetMitmParams configures MITM interception: whether it is active, and the
+// CA certificate and private key (PEM) used to sign per-host certificates.
+type SetMitmParams struct {
+	Enable     bool   `json:"enable"`
+	Certificate string `json:"certificate"`
+	PrivateKey string `json:"private-key"`
+}
+
+// MitmCertificate carries the root CA the user must install and trust.
+type MitmCertificate struct {
+	Certificate string `json:"certificate"`
+}
+
+// UpdateMitmRulesParams swaps the active rewrite rule set.
+type UpdateMitmRulesParams struct {
+	Rules string `json:"rules"`
 }

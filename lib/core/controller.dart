@@ -253,6 +253,18 @@ class CoreController {
     return _interface.updateGeoData(type);
   }
 
+  Future<String> setMitm(SetMitmParams params) {
+    return _interface.setMitm(params);
+  }
+
+  Future<String> getMitmCertificate() {
+    return _interface.getMitmCertificate();
+  }
+
+  Future<String> updateMitmRules(String rules) {
+    return _interface.updateMitmRules(rules);
+  }
+
   Future<String> sideLoadExternalProvider({
     required String providerName,
     required String data,

@@ -15,6 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'config/advanced.dart';
 import 'config/custom_resources.dart';
+import 'mitm.dart';
 import 'developer.dart';
 import 'disclaimer.dart';
 import 'theme.dart';
@@ -59,6 +60,7 @@ class _ToolViewState extends ConsumerState<ToolsView> {
         if (system.isAndroid) const _AccessItem(),
         const _AdvancedConfigItem(),
         const _CustomResourcesItem(),
+        const _MitmItem(),
         const _GeneralItem(),
       ],
       footer: [
@@ -185,6 +187,19 @@ class _AccessItem extends StatelessWidget {
       leading: const GlyphIcon(AppGlyphs.appsList),
       title: Text(context.appLocalizations.accessControl),
       widget: const AccessView(),
+    );
+  }
+}
+
+class _MitmItem extends StatelessWidget {
+  const _MitmItem();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListItem.open(
+      leading: const GlyphIcon(AppGlyphs.filter),
+      title: Text(context.appLocalizations.mitmRewrite),
+      widget: const MitmView(),
     );
   }
 }

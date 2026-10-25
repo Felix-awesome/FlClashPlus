@@ -496,3 +496,17 @@ _ProxiesData _$ProxiesDataFromJson(Map<String, dynamic> json) => _ProxiesData(
 
 Map<String, dynamic> _$ProxiesDataToJson(_ProxiesData instance) =>
     <String, dynamic>{'proxies': instance.proxies, 'all': instance.all};
+
+_SetMitmParams _$SetMitmParamsFromJson(Map<String, dynamic> json) =>
+    _SetMitmParams(
+      enable: json['enable'] as bool? ?? false,
+      certificate: json['certificate'] as String? ?? '',
+      privateKey: json['private-key'] as String? ?? '',
+    );
+
+Map<String, dynamic> _$SetMitmParamsToJson(_SetMitmParams instance) =>
+    <String, dynamic>{
+      'enable': instance.enable,
+      'certificate': instance.certificate,
+      'private-key': instance.privateKey,
+    };

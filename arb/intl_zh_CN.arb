@@ -963,5 +963,17 @@
   "preferred": "首选",
   "addToLocalProxies": "添加到本地代理",
   "addedToLocalProxies": "已将 {name} 添加到本地代理",
-  "alreadyInLocalProxies": "本地代理中已有 {name}"
+  "alreadyInLocalProxies": "本地代理中已有 {name}",
+  "mitmRewrite": "MITM 重写",
+  "mitmEnable": "开启 MITM",
+  "mitmEnableDesc": "拦截 HTTPS 流量，并按下方规则重写匹配请求，用于屏蔽广告与追踪。",
+  "mitmRules": "重写规则",
+  "mitmRulesEmpty": "暂无规则",
+  "mitmRulesCount": "{count} 条规则",
+  "mitmCertificate": "CA 证书",
+  "mitmCertificateDesc": "复制根证书，在本机安装并信任。",
+  "mitmCaInstallHint": "请安装并信任 CA 证书，否则被拦截的 HTTPS 请求会提示不受信任。Android 7+ 请安装到用户证书库。",
+  "mitmCertCopied": "证书已复制到剪贴板",
+  "mitmCertError": "获取证书失败"
+
 }

@@ -371,3 +371,16 @@ abstract class ProxiesData with _$ProxiesData {
   factory ProxiesData.fromJson(Map<String, Object?> json) =>
       _$ProxiesDataFromJson(json);
 }
+
+
+@freezed
+abstract class SetMitmParams with _$SetMitmParams {
+  const factory SetMitmParams({
+    @Default(false) bool enable,
+    @Default('') String certificate,
+    @JsonKey(name: 'private-key') @Default('') String privateKey,
+  }) = _SetMitmParams;
+
+  factory SetMitmParams.fromJson(Map<String, Object?> json) =>
+      _$SetMitmParamsFromJson(json);
+}

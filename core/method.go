@@ -226,6 +226,9 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	dumpRuleSetMethod:              withFallible(handleDumpRuleSet),
 	compileRuleSetMethod:           withFallible(handleCompileRuleSet),
 	clearEffectMethod:              withMessage(handleClearEffect),
+	setMitmMethod:                  withMessage(handleSetMitm),
+	getMitmCertificateMethod:       withFallible(handleGetMitmCertificate),
+	updateMitmRulesMethod:          withMessage(handleUpdateMitmRules),
 }
 
 func watchRouteHandler(call *MethodCall) (any, error) {

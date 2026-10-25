@@ -6693,4 +6693,280 @@ as List<String>,
 
 }
 
+
+/// @nodoc
+mixin _$SetMitmParams {
+
+ bool get enable; String get certificate;@JsonKey(name: 'private-key') String get privateKey;
+/// Create a copy of SetMitmParams
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SetMitmParamsCopyWith<SetMitmParams> get copyWith => _$SetMitmParamsCopyWithImpl<SetMitmParams>(this as SetMitmParams, _$identity);
+
+  /// Serializes this SetMitmParams to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as SetMitmParams;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SetMitmParams&&(identical(other.enable, _this.enable) || other.enable == _this.enable)&&(identical(other.certificate, _this.certificate) || other.certificate == _this.certificate)&&(identical(other.privateKey, _this.privateKey) || other.privateKey == _this.privateKey));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as SetMitmParams;
+  return Object.hash(runtimeType,_this.enable,_this.certificate,_this.privateKey);
+}
+
+@override
+String toString() {
+  final _this = this as SetMitmParams;
+  return 'SetMitmParams(enable: ${_this.enable}, certificate: ${_this.certificate}, privateKey: ${_this.privateKey})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SetMitmParamsCopyWith<$Res>  {
+  factory $SetMitmParamsCopyWith(SetMitmParams value, $Res Function(SetMitmParams) _then) = _$SetMitmParamsCopyWithImpl;
+@useResult
+$Res call({
+ bool enable, String certificate,@JsonKey(name: 'private-key') String privateKey
+});
+
+
+
+
+}
+/// @nodoc
+class _$SetMitmParamsCopyWithImpl<$Res>
+    implements $SetMitmParamsCopyWith<$Res> {
+  _$SetMitmParamsCopyWithImpl(this._self, this._then);
+
+  final SetMitmParams _self;
+  final $Res Function(SetMitmParams) _then;
+
+/// Create a copy of SetMitmParams
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? enable = null,Object? certificate = null,Object? privateKey = null,}) {
+  return _then(SetMitmParams(
+enable: null == enable ? _self.enable : enable // ignore: cast_nullable_to_non_nullable
+as bool,certificate: null == certificate ? _self.certificate : certificate // ignore: cast_nullable_to_non_nullable
+as String,privateKey: null == privateKey ? _self.privateKey : privateKey // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [SetMitmParams].
+extension SetMitmParamsPatterns on SetMitmParams {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SetMitmParams value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SetMitmParams() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SetMitmParams value)  $default,){
+final _that = this;
+switch (_that) {
+case _SetMitmParams():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SetMitmParams value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SetMitmParams() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( bool enable,  String certificate, @JsonKey(name: 'private-key')  String privateKey)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SetMitmParams() when $default != null:
+return $default(_that.enable,_that.certificate,_that.privateKey);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( bool enable,  String certificate, @JsonKey(name: 'private-key')  String privateKey)  $default,) {final _that = this;
+switch (_that) {
+case _SetMitmParams():
+return $default(_that.enable,_that.certificate,_that.privateKey);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( bool enable,  String certificate, @JsonKey(name: 'private-key')  String privateKey)?  $default,) {final _that = this;
+switch (_that) {
+case _SetMitmParams() when $default != null:
+return $default(_that.enable,_that.certificate,_that.privateKey);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _SetMitmParams implements SetMitmParams {
+  const _SetMitmParams({this.enable = false, this.certificate = '', @JsonKey(name: 'private-key') this.privateKey = ''});
+  factory _SetMitmParams.fromJson(Map<String, dynamic> json) => _$SetMitmParamsFromJson(json);
+
+@override@JsonKey() final  bool enable;
+@override@JsonKey() final  String certificate;
+@override@JsonKey(name: 'private-key') final  String privateKey;
+
+/// Create a copy of SetMitmParams
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SetMitmParamsCopyWith<_SetMitmParams> get copyWith => __$SetMitmParamsCopyWithImpl<_SetMitmParams>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$SetMitmParamsToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SetMitmParams&&(identical(other.enable, enable) || other.enable == enable)&&(identical(other.certificate, certificate) || other.certificate == certificate)&&(identical(other.privateKey, privateKey) || other.privateKey == privateKey));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,enable,certificate,privateKey);
+}
+
+@override
+String toString() {
+    return 'SetMitmParams(enable: $enable, certificate: $certificate, privateKey: $privateKey)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SetMitmParamsCopyWith<$Res> implements $SetMitmParamsCopyWith<$Res> {
+  factory _$SetMitmParamsCopyWith(_SetMitmParams value, $Res Function(_SetMitmParams) _then) = __$SetMitmParamsCopyWithImpl;
+@override @useResult
+$Res call({
+ bool enable, String certificate,@JsonKey(name: 'private-key') String privateKey
+});
+
+
+
+
+}
+/// @nodoc
+class __$SetMitmParamsCopyWithImpl<$Res>
+    implements _$SetMitmParamsCopyWith<$Res> {
+  __$SetMitmParamsCopyWithImpl(this._self, this._then);
+
+  final _SetMitmParams _self;
+  final $Res Function(_SetMitmParams) _then;
+
+/// Create a copy of SetMitmParams
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? enable = null,Object? certificate = null,Object? privateKey = null,}) {
+  return _then(_SetMitmParams(
+enable: null == enable ? _self.enable : enable // ignore: cast_nullable_to_non_nullable
+as bool,certificate: null == certificate ? _self.certificate : certificate // ignore: cast_nullable_to_non_nullable
+as String,privateKey: null == privateKey ? _self.privateKey : privateKey // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
 // dart format on
