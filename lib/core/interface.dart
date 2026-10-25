@@ -533,7 +533,17 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   @override
   Future<String> getMitmCertificate() async {
-    return _invokeMessage(method: CoreMethod.getMitmCertificate);
+    final data = await _invokeMethod<Map<String, dynamic>>(
+      method: CoreMethod.getMitmCertificate,
+    );
+    final cert = data?["certificate"];
+    if (cert is! String || cert.isEmpty) {
+      throw CoreMethodException(
+        code: "no_certificate",
+        message: "Core returned no MITM certificate",
+      );
+    }
+    return cert;
   }
 
   @override
