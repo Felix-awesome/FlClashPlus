@@ -227,7 +227,7 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	compileRuleSetMethod:           withFallible(handleCompileRuleSet),
 	clearEffectMethod:              withMessage(handleClearEffect),
 	setMitmMethod:                  withMessage(handleSetMitm),
-	getMitmCertificateMethod:       withFallible(handleGetMitmCertificate),
+	getMitmCertificateMethod:       func(call *MethodCall) (any, error) { return handleGetMitmCertificate() },
 	updateMitmRulesMethod:          withMessage(handleUpdateMitmRules),
 }
 
