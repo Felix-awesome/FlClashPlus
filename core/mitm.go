@@ -56,12 +56,15 @@ func loadMitmCA() (*mitm.CA, error) {
 		return nil, err
 	}
 
-	// Extract the private key for persistence. The CA keeps it internal, so we
-	// re-derive it via a fresh load of a known-good pair is not possible; we
-	// rely on the fact that NewCA is deterministic enough to persist only the
-	// certificate and regenerate on key loss. For simplicity the key is not
-	// persisted here; the in-memory CA remains authoritative for the process.
-	_ = keyPath
+	// Persist the private key as well, so the installed root stays valid
+	// across core restarts instead of silently changing underneath it.
+	keyPEMOut, err := ca.PrivateKeyPEM()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(keyPath, keyPEMOut, 0o600); err != nil {
+		return nil, err
+	}
 	return ca, nil
 }
 

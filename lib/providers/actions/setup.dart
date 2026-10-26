@@ -707,6 +707,22 @@ class SetupAction extends _$SetupAction {
     return fallback;
   }
 
+  /// The core boots with interception disabled and an empty rule set, so the
+  /// persisted MITM switch and rewrite rules must be pushed again after every
+  /// (re)start of the core process.
+  Future<void> _syncMitm() async {
+    final appSetting = ref.read(appSettingProvider);
+    if (!appSetting.enableMitm) {
+      return;
+    }
+    try {
+      await _core.updateMitmRules(appSetting.mitmRules);
+      await _core.setMitm(SetMitmParams(enable: true));
+    } catch (error) {
+      commonPrint.log('sync mitm failed: $error');
+    }
+  }
+
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
@@ -791,6 +807,7 @@ class SetupAction extends _$SetupAction {
             await globalState.safeRun(() => onUpdated?.call());
             throw MessageException(message);
           }
+          await _syncMitm();
         } catch (e, s) {
           setupFailed = true;
           if (preloadInvoke != null) {

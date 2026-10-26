@@ -550,7 +550,7 @@ abstract class CoreHandlerInterface with CoreInterface {
   Future<String> updateMitmRules(String rules) async {
     return _invokeMessage(
       method: CoreMethod.updateMitmRules,
-      arguments: {rules: rules},
+      arguments: {"rules": rules},
     );
   }
 
