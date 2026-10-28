@@ -119,7 +119,10 @@ mixin CoreInterface {
 
   Future<String> getMitmCertificate();
 
-  Future<String> updateMitmRules(String rules, {Map<String, String> scripts = const {}});
+  Future<String> updateMitmRules(
+    String rules, {
+    Map<String, String> scripts = const {},
+  });
 }
 
 abstract class CoreHandlerInterface with CoreInterface {
