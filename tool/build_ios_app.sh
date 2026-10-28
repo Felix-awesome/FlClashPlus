@@ -29,11 +29,14 @@ fail() {
   local msg="iOS build failed at: ${label}"
   if [ -f "$LOG_FILE" ]; then
     local detail
-    detail="$(grep -inE 'error|failed|fatal|undefined|no such|cannot find|cannot open|PhaseScriptExecution|The following build commands failed|Swift Compiler|linker command failed|No such module|could not build|BUILD FAILED|Command failed' "$LOG_FILE" | tail -50 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    detail="$(grep -inE 'error|failed|fatal|undefined|no such|cannot find|cannot open|PhaseScriptExecution|The following build commands failed|Swift Compiler|linker command failed|No such module|could not build|BUILD FAILED|Command failed' "$LOG_FILE" | tail -60 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
     if [ -z "$detail" ]; then
-      detail="$(tail -50 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+      detail="$(tail -60 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
     fi
-    msg="${msg}%0A%0A${detail}"
+    # Also capture the head of the log, since flutter build ios can fail early.
+    local head
+    head="$(head -40 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    msg="${msg}%0A%0A--- HEAD (first 40 lines) ---%0A${head}%0A%0A--- MATCHES (tail 60) ---%0A${detail}"
   fi
   echo "::error::${msg}" >&2
   exit 1
