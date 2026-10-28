@@ -9,6 +9,9 @@ class Target {
   static const macosArm64 = Target(goos: 'darwin', goarch: 'arm64');
   static const macosAmd64 = Target(goos: 'darwin', goarch: 'amd64');
 
+  static const iosArm64 = Target(goos: 'ios', goarch: 'arm64');
+  static const iosAmd64 = Target(goos: 'ios', goarch: 'amd64');
+
   static const linuxArm64 = Target(goos: 'linux', goarch: 'arm64');
   static const linuxAmd64 = Target(goos: 'linux', goarch: 'amd64');
 
@@ -22,6 +25,8 @@ class Target {
     linuxAmd64,
     windowsAmd64,
     windowsArm64,
+    iosArm64,
+    iosAmd64,
   ];
 
   static List<Target> forPlatform(String platform) =>
@@ -38,7 +43,11 @@ class Target {
 
   String get executableExtension => goos == 'windows' ? '.exe' : '';
 
-  String get platformDir => goos == 'darwin' ? 'macos' : goos;
+  String get platformDir => switch (goos) {
+        'darwin' => 'macos',
+        'ios' => 'ios',
+        _ => goos,
+      };
 
   String get rustTriple {
     final arch = switch (goarch) {

@@ -287,4 +287,8 @@ type MitmCertificate struct {
 // UpdateMitmRulesParams swaps the active rewrite rule set.
 type UpdateMitmRulesParams struct {
 	Rules string `json:"rules"`
+	// Scripts maps a script reference (the Arg of a script rule, e.g. a URL or
+	// a local name) to its JavaScript source. Rules that reference a script are
+	// executed by the Quantumult X compatible engine wired into the interceptor.
+	Scripts map[string]string `json:"scripts,omitempty"`
 }

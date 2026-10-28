@@ -132,6 +132,17 @@ func handleUpdateMitmRules(params *UpdateMitmRulesParams) error {
 	set := mitm.NewSet()
 	set.Replace(rules)
 
+	// Wire the Quantumult X script engine, resolving script references (URL or
+	// local name) against the scripts bundled with this update. Without any
+	// scripts the engine is left unset and only fixed rewrite actions run.
+	if len(params.Scripts) > 0 {
+		engine := &mitm.ScriptEngine{}
+		loader := func(ref string) string {
+			return params.Scripts[ref]
+		}
+		mitm.SetScriptEngine(engine, loader)
+	}
+
 	mitmRuleSet = set
 	mitmInited = true
 	if mitmCA == nil && mitmEnabled {
@@ -140,6 +151,6 @@ func handleUpdateMitmRules(params *UpdateMitmRulesParams) error {
 		}
 	}
 	mitm.Enable(mitmEnabled, mitmCA, set)
-	log.Infoln("[MITM] installed %d rewrite rules", len(rules))
+	log.Infoln("[MITM] installed %d rewrite rules (%d scripts)", len(rules), len(params.Scripts))
 	return nil
 }
