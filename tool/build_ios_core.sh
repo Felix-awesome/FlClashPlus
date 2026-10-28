@@ -8,19 +8,17 @@ OUT_DIR="${1:-$CORE_DIR/../ios/FlClashCore.xcframework}"
 TAGS="with_gvisor"
 LDFLAGS="-w -s"
 
-# Read version from build_config.yaml if present.
 VERSION=""
 if [ -f "$CORE_DIR/../build_config.yaml" ]; then
-  VERSION=$(grep -E '^core_version:' "$CORE_DIR/../build_config.yaml" | sed 's/^core_version:/s*//')
+  VERSION=$(grep -E '^core_version:' "$CORE_DIR/../build_config.yaml" | sed 's/^core_version:[[:space:]]*//')
 fi
 if [ -n "$VERSION" ]; then
-  LDFLAGS="$LDFLAGS -X=github.com/metacubex/mihomo/constant.Version=$VERSION"
+  LDFLAGS="$LDFLAGS -X github.com/metacubex/mihomo/constant.Version=$VERSION"
 fi
 
 echo "Building iOS xcframework from $CORE_DIR"
 cd "$CORE_DIR"
 
-# gomobile bind needs the mobile package; it produces FlClashCore.xcframework.
 gomobile bind \
   -target=ios \
   -o "$OUT_DIR" \
