@@ -4,8 +4,7 @@
 # builds an unsigned IPA.
 #
 # Flutter 3.44+ uses Swift Package Manager (not CocoaPods) to integrate iOS
-# plugins, so there is no "pod install" step — flutter build ios handles plugin
-# integration via the generated FlutterGeneratedPluginSwiftPackage.
+# plugins, so there is no "pod install" step.
 # Usage: bash build_ios_app.sh [bundle_id] [app_group]
 set -euo pipefail
 
@@ -24,9 +23,13 @@ fail() {
   local label="$1"
   local msg="iOS build failed at: ${label}"
   if [ -f "$LOG_FILE" ]; then
-    local tail_lines
-    tail_lines="$(tail -40 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-    msg="${msg}%0A%0A${tail_lines}"
+    # Prefer error/warning lines; fall back to the tail.
+    local detail
+    detail="$(grep -iE 'error:|error |failed|fatal|cannot|undefined|no such|Swift Compiler|ld:' "$LOG_FILE" | tail -30 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    if [ -z "$detail" ]; then
+      detail="$(tail -30 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    fi
+    msg="${msg}%0A%0A${detail}"
   fi
   echo "::error::${msg}" >&2
   exit 1
