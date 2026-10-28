@@ -263,8 +263,11 @@ class CoreController {
     return _interface.getMitmCertificate();
   }
 
-  Future<String> updateMitmRules(String rules) {
-    return _interface.updateMitmRules(rules);
+  Future<String> updateMitmRules(
+    String rules, {
+    Map<String, String> scripts = const {},
+  }) {
+    return _interface.updateMitmRules(rules, scripts: scripts);
   }
 
   Future<String> sideLoadExternalProvider({

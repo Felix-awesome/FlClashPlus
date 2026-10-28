@@ -61,12 +61,7 @@ class MitmView extends ConsumerWidget {
                 ),
                 widget: _MitmRulesEditor(
                   initialContent: mitmRules,
-                  onSave: (content) {
-                    ref
-                        .read(appSettingProvider.notifier)
-                        .update((state) => state.copyWith(mitmRules: content));
-                    ref.read(coreHandlerProvider).updateMitmRules(content);
-                  },
+                  onSave: (content) => _saveRules(context, ref, content),
                 ),
               ),
               ListItem(
@@ -85,6 +80,62 @@ class MitmView extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _saveRules(
+    BuildContext context,
+    WidgetRef ref,
+    String content,
+  ) async {
+    ref
+        .read(appSettingProvider.notifier)
+        .update((state) => state.copyWith(mitmRules: content));
+    // Pull remote scripts referenced by script-request/script-response rules
+    // so the core can run them (Quantumult X style remote rewriting).
+    final scripts = await _fetchScripts(content);
+    await ref
+        .read(coreHandlerProvider)
+        .updateMitmRules(content, scripts: scripts);
+  }
+
+  /// Extracts script references (URLs or local names) from script-* rules and
+  /// fetches their JavaScript source. Non-URL references are left empty.
+  Future<Map<String, String>> _fetchScripts(String rules) async {
+    final refs = <String>{};
+    for (final line in rules.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty ||
+          trimmed.startsWith('#') ||
+          trimmed.startsWith('//')) {
+        continue;
+      }
+      final fields = trimmed.split(RegExp(r'\s+'));
+      if (fields.length < 3) continue;
+      // Skip the optional "url" marker.
+      var action = fields[1];
+      if (action == 'url' && fields.length >= 3) {
+        action = fields[2];
+      }
+      if (action.startsWith('script-request') ||
+          action.startsWith('script-response')) {
+        // The script reference is the last field.
+        final ref = fields.last;
+        if (ref.isNotEmpty) refs.add(ref);
+      }
+    }
+    final scripts = <String, String>{};
+    for (final ref in refs) {
+      if (ref.startsWith('http://') || ref.startsWith('https://')) {
+        try {
+          final response = await request.getTextResponseForUrl(ref);
+          final body = response.data ?? '';
+          if (body.isNotEmpty) scripts[ref] = body;
+        } catch (error) {
+          commonPrint.log('fetch MITM script $ref failed: $error');
+        }
+      }
+    }
+    return scripts;
   }
 
   String _rulesSummary(AppLocalizations l, String rules) {

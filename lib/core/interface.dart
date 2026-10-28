@@ -119,7 +119,7 @@ mixin CoreInterface {
 
   Future<String> getMitmCertificate();
 
-  Future<String> updateMitmRules(String rules);
+  Future<String> updateMitmRules(String rules, {Map<String, String> scripts = const {}});
 }
 
 abstract class CoreHandlerInterface with CoreInterface {
@@ -547,10 +547,16 @@ abstract class CoreHandlerInterface with CoreInterface {
   }
 
   @override
-  Future<String> updateMitmRules(String rules) async {
+  Future<String> updateMitmRules(
+    String rules, {
+    Map<String, String> scripts = const {},
+  }) async {
     return _invokeMessage(
       method: CoreMethod.updateMitmRules,
-      arguments: {"rules": rules},
+      arguments: {
+        "rules": rules,
+        if (scripts.isNotEmpty) "scripts": scripts,
+      },
     );
   }
 
