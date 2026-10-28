@@ -76,6 +76,17 @@ run "add_ios_extension" ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
 echo "=== [4/6] flutter pub get (restore SPM integration) ==="
 run "flutter pub get" $FLUTTER_CMD pub get
 
+# The Go core is already built as FlClashCore.xcframework (gomobile bind), and
+# the iOS core talks to the app over MethodChannel -- the desktop/Android
+# native assets (setup's Go build, rust_api's IPC/rquickjs) are not needed on
+# iOS. Skip both hooks so `flutter build ios` does not try to cross-compile
+# them (rust_api's Cargo.toml has no iOS target config and would fail).
+if command -v yq >/dev/null 2>&1; then
+  yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
+else
+  sed -i.bak 's/^\(\s*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
+fi
+
 echo "=== [5/6] flutter build ios (unsigned) ==="
 cd "$ROOT_DIR"
 run "flutter build ios" $FLUTTER_CMD build ios --release --no-codesign

@@ -36,7 +36,12 @@ void main(List<String> args) {
         });
       };
       try {
-        await RustLib.init();
+        // The Rust FFI library (IPC server + rquickjs) is desktop/Android-only;
+        // on iOS the core runs inside the NetworkExtension and talks over
+        // MethodChannel, so there is no Rust library to load.
+        if (!Platform.isIOS) {
+          await RustLib.init();
+        }
         final version = await system.init();
         final container = await bootstrap.init(version);
         await FlClashHttpOverrides.trustCoreRoots();
