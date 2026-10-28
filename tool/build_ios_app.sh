@@ -4,7 +4,12 @@
 # builds an unsigned IPA.
 #
 # Flutter 3.44+ uses Swift Package Manager (not CocoaPods) to integrate iOS
-# plugins, so there is no "pod install" step.
+# plugins. "flutter pub get" generates the FlutterGeneratedPluginSwiftPackage
+# SPM reference in Runner.xcodeproj. Because add_ios_extension.rb rewrites the
+# project with the xcodeproj gem (which can drop SPM package references), we
+# run pub get BEFORE and AFTER it, so the SPM integration is always present
+# when flutter build ios runs.
+#
 # Usage: bash build_ios_app.sh [bundle_id] [app_group]
 set -euo pipefail
 
@@ -23,11 +28,10 @@ fail() {
   local label="$1"
   local msg="iOS build failed at: ${label}"
   if [ -f "$LOG_FILE" ]; then
-    # Prefer error/warning lines; fall back to the tail.
     local detail
-    detail="$(grep -iE 'error:|error |failed|fatal|cannot|undefined|no such|Swift Compiler|ld:' "$LOG_FILE" | tail -30 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    detail="$(grep -inE 'error|failed|fatal|undefined|no such|cannot find|cannot open|PhaseScriptExecution|The following build commands failed|Swift Compiler|linker command failed|No such module|could not build|BUILD FAILED|Command failed' "$LOG_FILE" | tail -50 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
     if [ -z "$detail" ]; then
-      detail="$(tail -30 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+      detail="$(tail -50 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
     fi
     msg="${msg}%0A%0A${detail}"
   fi
@@ -44,7 +48,7 @@ run() {
   fi
 }
 
-echo "=== [1/5] Ensure Flutter iOS project skeleton ==="
+echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
 BACKUP_DIR="$(mktemp -d)"
 cp -r "$IOS_DIR" "$BACKUP_DIR/ios.bak" 2>/dev/null || true
 
@@ -64,18 +68,21 @@ do
   fi
 done
 
-echo "=== [2/5] Add FlClashService extension target to Xcode project ==="
+echo "=== [2/6] flutter pub get (generate SPM integration) ==="
+run "flutter pub get" $FLUTTER_CMD pub get
+
+echo "=== [3/6] Add FlClashService extension target to Xcode project ==="
 run "add_ios_extension" ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
   "$IOS_DIR/Runner.xcodeproj" "$BUNDLE_ID" "$APP_GROUP" "$XCFRAMEWORK"
 
-echo "=== [3/5] flutter pub get ==="
+echo "=== [4/6] flutter pub get (restore SPM integration) ==="
 run "flutter pub get" $FLUTTER_CMD pub get
 
-echo "=== [4/5] flutter build ios (unsigned) ==="
+echo "=== [5/6] flutter build ios (unsigned) ==="
 cd "$ROOT_DIR"
 run "flutter build ios" $FLUTTER_CMD build ios --release --no-codesign
 
-echo "=== [5/5] Package unsigned IPA ==="
+echo "=== [6/6] Package unsigned IPA ==="
 cd "$ROOT_DIR/build/ios/iphoneos"
 mkdir -p Payload
 cp -r Runner.app Payload/

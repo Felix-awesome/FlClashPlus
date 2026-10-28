@@ -172,4 +172,4 @@ class CoreIOS extends CoreHandlerInterface {
   }
 }
 
-CoreIOS? get coreIOS => system.isIOS ? CoreIOS() : null;
+final coreIOS = system.isIOS ? CoreIOS() : null;
