@@ -44,10 +44,10 @@ class Target {
   String get executableExtension => goos == 'windows' ? '.exe' : '';
 
   String get platformDir => switch (goos) {
-        'darwin' => 'macos',
-        'ios' => 'ios',
-        _ => goos,
-      };
+    'darwin' => 'macos',
+    'ios' => 'ios',
+    _ => goos,
+  };
 
   String get rustTriple {
     final arch = switch (goarch) {

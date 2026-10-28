@@ -31,10 +31,7 @@ void main() {
     });
 
     test('resolves the iOS Core target', () {
-      expect(
-        Target.resolve(platform: 'ios', goarch: 'arm64'),
-        Target.iosArm64,
-      );
+      expect(Target.resolve(platform: 'ios', goarch: 'arm64'), Target.iosArm64);
     });
   });
 

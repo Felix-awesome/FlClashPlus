@@ -144,8 +144,7 @@ class MitmView extends ConsumerWidget {
     }
     final count = rules
         .split('\n')
-        .where((line) =>
-            line.trim().isNotEmpty && !line.trim().startsWith('#'))
+        .where((line) => line.trim().isNotEmpty && !line.trim().startsWith('#'))
         .length;
     return l.mitmRulesCount(count);
   }

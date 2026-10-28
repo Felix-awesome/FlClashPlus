@@ -531,7 +531,10 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   @override
   Future<String> setMitm(SetMitmParams params) async {
-    return _invokeMessage(method: CoreMethod.setMitm, arguments: params.toJson());
+    return _invokeMessage(
+      method: CoreMethod.setMitm,
+      arguments: params.toJson(),
+    );
   }
 
   @override
@@ -556,10 +559,7 @@ abstract class CoreHandlerInterface with CoreInterface {
   }) async {
     return _invokeMessage(
       method: CoreMethod.updateMitmRules,
-      arguments: {
-        "rules": rules,
-        if (scripts.isNotEmpty) "scripts": scripts,
-      },
+      arguments: {"rules": rules, if (scripts.isNotEmpty) "scripts": scripts},
     );
   }
 
