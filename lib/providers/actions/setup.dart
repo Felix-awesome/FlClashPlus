@@ -716,8 +716,11 @@ class SetupAction extends _$SetupAction {
       return;
     }
     try {
-      await _core.updateMitmRules(appSetting.mitmRules);
-      await _core.setMitm(SetMitmParams(enable: true));
+      // Re-pull remote scripts referenced by script-* rules so the core can
+      // run them after every (re)start of the core process.
+      final scripts = await fetchMitmScripts(appSetting.mitmRules);
+      await _core.updateMitmRules(appSetting.mitmRules, scripts: scripts);
+      await _core.setMitm(const SetMitmParams(enable: true));
     } catch (error) {
       commonPrint.log('sync mitm failed: $error');
     }
