@@ -7,8 +7,7 @@
 # plugins. "flutter pub get" generates the FlutterGeneratedPluginSwiftPackage
 # SPM reference in Runner.xcodeproj. Because add_ios_extension.rb rewrites the
 # project with the xcodeproj gem (which can drop SPM package references), we
-# run pub get BEFORE and AFTER it, so the SPM integration is always present
-# when flutter build ios runs.
+# run pub get BEFORE and AFTER it.
 #
 # Usage: bash build_ios_app.sh [bundle_id] [app_group]
 set -euo pipefail
@@ -28,15 +27,11 @@ fail() {
   local label="$1"
   local msg="iOS build failed at: ${label}"
   if [ -f "$LOG_FILE" ]; then
-    local detail
-    detail="$(grep -inE 'error|failed|fatal|undefined|no such|cannot find|cannot open|PhaseScriptExecution|The following build commands failed|Swift Compiler|linker command failed|No such module|could not build|BUILD FAILED|Command failed' "$LOG_FILE" | tail -60 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-    if [ -z "$detail" ]; then
-      detail="$(tail -60 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-    fi
-    # Also capture the head of the log, since flutter build ios can fail early.
-    local head
-    head="$(head -40 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-    msg="${msg}%0A%0A--- HEAD (first 40 lines) ---%0A${head}%0A%0A--- MATCHES (tail 60) ---%0A${detail}"
+    # Dump the WHOLE log (flutter build ios logs are short) so the real error
+    # is visible in the annotation. Escape % \r \n for ::error::.
+    local full
+    full="$(cat "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    msg="${msg}%0A%0A--- FULL LOG ---%0A${full}"
   fi
   echo "::error::${msg}" >&2
   exit 1
