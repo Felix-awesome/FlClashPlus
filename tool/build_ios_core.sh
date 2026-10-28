@@ -3,20 +3,21 @@
 # Usage: bash build_ios_core.sh [output_dir]
 set -euo pipefail
 
-CORE_DIR="$(cd "$(dirname "$0")/../core" && pwd)"
-OUT_DIR="${1:-$CORE_DIR/../ios/FlClashCore.xcframework}"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CORE_DIR="$ROOT_DIR/core"
+OUT_DIR="${1:-$ROOT_DIR/ios/FlClashCore.xcframework}"
 TAGS="with_gvisor"
 LDFLAGS="-w -s"
 
 VERSION=""
-if [ -f "$CORE_DIR/../build_config.yaml" ]; then
-  VERSION=$(grep -E '^core_version:' "$CORE_DIR/../build_config.yaml" | sed 's/^core_version:[[:space:]]*//')
+if [ -f "$ROOT_DIR/build_config.yaml" ]; then
+  VERSION=$(grep -E '^core_version:' "$ROOT_DIR/build_config.yaml" | sed 's/^core_version:[[:space:]]*//')
 fi
 if [ -n "$VERSION" ]; then
   LDFLAGS="$LDFLAGS -X github.com/metacubex/mihomo/constant.Version=$VERSION"
 fi
 
-echo "Building iOS xcframework from $CORE_DIR"
+echo "Building iOS xcframework from $CORE_DIR -> $OUT_DIR"
 cd "$CORE_DIR"
 
 gomobile bind \
