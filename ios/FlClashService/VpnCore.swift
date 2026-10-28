@@ -73,7 +73,7 @@ final class VpnCore {
 
 /// A gomobile ResultHandler implementation that captures the single result
 /// callback the core delivers.
-private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
+private final class ResultCallback: NSObject, MobileResultHandler {
     private let lock = NSLock()
     private var buffer = ""
 
@@ -83,11 +83,12 @@ private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
         return buffer
     }
 
-    func onResult(_ data: Data?) throws {
+    func onResult(_ data: Data?, error: NSErrorPointer) -> Bool {
         lock.lock()
         if let data = data {
             buffer = String(data: data, encoding: .utf8) ?? ""
         }
         lock.unlock()
+        return false
     }
 }

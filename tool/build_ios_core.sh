@@ -6,6 +6,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CORE_DIR="$ROOT_DIR/core"
 OUT_DIR="${1:-$ROOT_DIR/ios/FlClashCore.xcframework}"
+
+# Resolve a relative output path against the repo root (gomobile bind runs from
+# CORE_DIR, so a bare relative path would otherwise land under core/).
+case "$OUT_DIR" in
+  /*) ;;  # already absolute
+  *) OUT_DIR="$ROOT_DIR/$OUT_DIR" ;;
+esac
+
 TAGS="with_gvisor"
 LDFLAGS="-w -s"
 

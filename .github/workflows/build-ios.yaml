@@ -40,24 +40,15 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
+      - name: Setup CocoaPods + xcodeproj
+        run: |
+          gem install cocoapods xcodeproj --no-document
+
       - name: Build Go core xcframework
         run: bash tool/build_ios_core.sh ios/FlClashCore.xcframework
 
-      - name: Install dependencies
-        run: flutter pub get
-
-      - name: Build iOS (unsigned)
-        run: |
-          flutter build ios --release --no-codesign
-
-      - name: Package unsigned IPA
-        run: |
-          mkdir -p dist
-          cd build/ios/iphoneos
-          mkdir -p Payload
-          cp -r Runner.app Payload/
-          zip -qry ../../dist/FlClash-unsigned.ipa Payload
-          cd ../..
+      - name: Build iOS app (unsigned)
+        run: bash tool/build_ios_app.sh ${{ env.BUNDLE_ID }} ${{ env.APP_GROUP }}
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
