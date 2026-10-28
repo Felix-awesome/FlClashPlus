@@ -25,8 +25,15 @@ void main() {
         throwsA(isA<BuildException>()),
       );
       expect(
-        () => Target.resolve(platform: 'ios', goarch: 'arm64'),
+        () => Target.resolve(platform: 'android', goarch: 'arm64'),
         throwsA(isA<BuildException>()),
+      );
+    });
+
+    test('resolves the iOS Core target', () {
+      expect(
+        Target.resolve(platform: 'ios', goarch: 'arm64'),
+        Target.iosArm64,
       );
     });
   });
