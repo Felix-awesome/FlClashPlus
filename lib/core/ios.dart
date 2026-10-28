@@ -112,19 +112,24 @@ class CoreIOS extends CoreHandlerInterface {
     return _stop(allowClosed: true);
   }
 
-  // The extension's PacketTunnelProvider opens/closes the core listener when
-  // the tunnel starts/stops, so these mirror the VPN lifecycle.
+  // On iOS the core runs inside the packet-tunnel extension, and the Go core's
+  // StartTun/StopTun already open/close the inbound listener automatically
+  // (see core/lib.go). So unlike Android there is no separate listener command
+  // to send: starting/stopping the tunnel IS starting/stopping the listener.
   @override
   Future<bool> startListener() async {
-    await super.startListener();
+    // start() already issued startVPNTunnel when the core booted, so the
+    // tunnel is usually connecting/connected here; re-issuing startVPNTunnel
+    // throws in that state. Treat an already-running tunnel as success.
+    if (await _service?.getStatus() ?? false) {
+      return true;
+    }
     return await _service?.start() ?? false;
   }
 
   @override
   Future<bool> stopListener() async {
-    final serviceStopped = await _service?.stop() ?? false;
-    await super.stopListener();
-    return serviceStopped;
+    return await _service?.stop() ?? false;
   }
 
   @override
