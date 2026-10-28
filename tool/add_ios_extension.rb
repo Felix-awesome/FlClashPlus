@@ -26,6 +26,11 @@ abort "Runner target not found" unless runner_target
 # --- Configure Runner host app: bundle id + entitlements ---
 runner_target.build_configurations.each do |config|
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id
+  # Unsigned CI build: the IPA is sideloaded (e.g. AltStore/TrollStore) and
+  # signed by the user, so disable code signing for every target.
+  config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+  config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+  config.build_settings['CODE_SIGN_IDENTITY'] = ''
   # Use our entitlements (App Group + Personal VPN) for the host app.
   runner_ent = File.join(ios_dir, 'Runner', 'Runner.entitlements')
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements' if File.exist?(runner_ent)
@@ -46,6 +51,9 @@ ext_target.build_configurations.each do |config|
   config.build_settings['PRODUCT_NAME'] = ext_name
   config.build_settings['INFOPLIST_FILE'] = 'FlClashService/Info.plist'
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'FlClashService/FlClashService.entitlements'
+  config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+  config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+  config.build_settings['CODE_SIGN_IDENTITY'] = ''
   config.build_settings['SWIFT_VERSION'] = '5.0'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
   config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'

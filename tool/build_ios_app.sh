@@ -11,18 +11,34 @@ APP_GROUP="${2:-group.com.follow.clash}"
 IOS_DIR="$ROOT_DIR/ios"
 XCFRAMEWORK="$IOS_DIR/FlClashCore.xcframework"
 FLUTTER_CMD="${FLUTTER_CMD:-flutter}"
+LOG_FILE="$ROOT_DIR/dist/ios_build.log"
 
 cd "$ROOT_DIR"
+mkdir -p "$ROOT_DIR/dist"
+
+fail() {
+  # Emit a GitHub Actions error annotation (surfaces in the run summary) and
+  # dump the tail of the captured log so the failure point is visible.
+  echo "::error::iOS build failed at: $1" >&2
+  if [ -f "$LOG_FILE" ]; then
+    echo ">>> last 60 lines of $LOG_FILE:" >&2
+    tail -60 "$LOG_FILE" >&2
+  fi
+  exit 1
+}
+
+run() {
+  echo "=== [*] $1 ==="
+  shift
+  "$@" > "$LOG_FILE" 2>&1 || fail "$1"
+}
 
 echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
-# flutter create generates Runner.xcodeproj + Runner.xcworkspace + Info.plist.
-# It must NOT clobber our Podfile / Swift sources, so back them up first.
 BACKUP_DIR="$(mktemp -d)"
 cp -r "$IOS_DIR" "$BACKUP_DIR/ios.bak" 2>/dev/null || true
 
-$FLUTTER_CMD create --platforms=ios --org com.follow --project-name fl_clash .
+run "flutter create" $FLUTTER_CMD create --platforms=ios --org com.follow --project-name fl_clash .
 
-# Restore our custom files over the generated skeleton.
 for f in \
   "Runner/AppDelegate.swift" \
   "Runner/Runner.entitlements" \
@@ -39,25 +55,21 @@ do
 done
 
 echo "=== [2/6] Add FlClashService extension target to Xcode project ==="
-ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
-  "$IOS_DIR/Runner.xcodeproj" \
-  "$BUNDLE_ID" \
-  "$APP_GROUP" \
-  "$XCFRAMEWORK"
+run "add_ios_extension" ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
+  "$IOS_DIR/Runner.xcodeproj" "$BUNDLE_ID" "$APP_GROUP" "$XCFRAMEWORK"
 
 echo "=== [3/6] flutter pub get ==="
-$FLUTTER_CMD pub get
+run "flutter pub get" $FLUTTER_CMD pub get
 
 echo "=== [4/6] pod install ==="
 cd "$IOS_DIR"
-pod install --repo-update
+run "pod install" pod install
 
 echo "=== [5/6] flutter build ios (unsigned) ==="
 cd "$ROOT_DIR"
-$FLUTTER_CMD build ios --release --no-codesign
+run "flutter build ios" $FLUTTER_CMD build ios --release --no-codesign
 
 echo "=== [6/6] Package unsigned IPA ==="
-mkdir -p "$ROOT_DIR/dist"
 cd "$ROOT_DIR/build/ios/iphoneos"
 mkdir -p Payload
 cp -r Runner.app Payload/
