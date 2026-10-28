@@ -17,20 +17,26 @@ cd "$ROOT_DIR"
 mkdir -p "$ROOT_DIR/dist"
 
 fail() {
-  # Emit a GitHub Actions error annotation (surfaces in the run summary) and
-  # dump the tail of the captured log so the failure point is visible.
-  echo "::error::iOS build failed at: $1" >&2
+  local label="$1"
+  local msg="iOS build failed at: ${label}"
   if [ -f "$LOG_FILE" ]; then
-    echo ">>> last 60 lines of $LOG_FILE:" >&2
-    tail -60 "$LOG_FILE" >&2
+    local tail_lines
+    tail_lines="$(tail -40 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    msg="${msg}%0A%0A${tail_lines}"
   fi
+  echo "::error::${msg}" >&2
   exit 1
 }
 
+# run <label> <command...>  — capture output; on failure emit a diagnostic
+# annotation whose message includes the tail of the captured log.
 run() {
-  echo "=== [*] $1 ==="
+  local label="$1"
   shift
-  "$@" > "$LOG_FILE" 2>&1 || fail "$1"
+  echo "=== [$label] ==="
+  if ! "$@" > "$LOG_FILE" 2>&1; then
+    fail "$label"
+  fi
 }
 
 echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
