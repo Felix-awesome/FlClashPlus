@@ -270,13 +270,12 @@ type GeoUpdateStatus struct {
 	Error    string `json:"error,omitempty"`
 }
 
-
 // SetMitmParams configures MITM interception: whether it is active, and the
 // CA certificate and private key (PEM) used to sign per-host certificates.
 type SetMitmParams struct {
-	Enable     bool   `json:"enable"`
+	Enable      bool   `json:"enable"`
 	Certificate string `json:"certificate"`
-	PrivateKey string `json:"private-key"`
+	PrivateKey  string `json:"private-key"`
 }
 
 // MitmCertificate carries the root CA the user must install and trust.

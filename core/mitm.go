@@ -14,11 +14,11 @@ import (
 // The MITM CA and rule set live for the process lifetime and survive config
 // reloads, mirroring how the listener itself is recreated around them.
 var (
-	mitmMu       sync.Mutex
-	mitmCA       *mitm.CA
-	mitmRuleSet  *mitm.Set
-	mitmEnabled  bool
-	mitmInited   bool
+	mitmMu      sync.Mutex
+	mitmCA      *mitm.CA
+	mitmRuleSet *mitm.Set
+	mitmEnabled bool
+	mitmInited  bool
 )
 
 // mitmHome returns the directory under mihomo's home dir where the MITM CA is

@@ -1,0 +1,139 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/core/method.dart';
+import 'package:fl_clash/core/spill.dart';
+import 'package:fl_clash/models/models.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
+final _utf8JsonDecoder = utf8.decoder.fuse(json.decoder);
+
+Object? _decodeUtf8Json(Uint8List data) => _utf8JsonDecoder.convert(data);
+
+Map<String, Object?> _decodeResponseOf((Uint8List, CoreMethod) request) {
+  final (data, method) = request;
+  final decoded = _decodeUtf8Json(data);
+  return withResultModel(method, Map<String, Object?>.from(decoded as Map));
+}
+
+Future<Map<String, Object?>> _decodeResponse(
+  Uint8List data,
+  CoreMethod method,
+) async {
+  if (data.length < 51200) {
+    return _decodeResponseOf((data, method));
+  }
+  return compute(_decodeResponseOf, (data, method));
+}
+
+/// The iOS counterpart of the Android [Service]: it drives the
+/// NetworkExtension tunnel via NEVPNManager (through the AppDelegate method
+/// channel) and forwards Core method calls to the Go core running inside the
+/// packet-tunnel extension via `sendProviderMessage` (handleAppMessage).
+class IOSService {
+  static IOSService? _instance;
+
+  late MethodChannel vpnChannel;
+  late MethodChannel coreChannel;
+
+  static const _vpnChannelName = '$packageName/ios_vpn';
+  static const _coreChannelName = '$packageName/core';
+
+  factory IOSService() {
+    _instance ??= IOSService._internal();
+    return _instance!;
+  }
+
+  IOSService._internal() {
+    vpnChannel = const MethodChannel(_vpnChannelName);
+    coreChannel = const MethodChannel(_coreChannelName);
+  }
+
+  /// Whether the VPN tunnel is currently connected or connecting.
+  Future<bool> getStatus() async {
+    try {
+      final status = await vpnChannel.invokeMapMethod<String, Object?>(
+        'getStatus',
+      );
+      return status?['running'] as bool? ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Saves the NETunnelProviderProtocol config. Returns true on success.
+  Future<bool> saveConfig({
+    required String homeDir,
+    String stack = 'gvisor',
+    String address = '198.18.0.1/30',
+    String dns = '198.18.0.1',
+    Map<String, Object?> options = const {},
+  }) async {
+    return await vpnChannel.invokeMethod<bool>('saveConfig', {
+          'homeDir': homeDir,
+          'stack': stack,
+          'address': address,
+          'dns': dns,
+          'options': options,
+        }) ??
+        false;
+  }
+
+  /// Requests the system VPN permission (triggers the NEVPNManager dialog).
+  Future<bool> requestPermission() async {
+    return await vpnChannel.invokeMethod<bool>('requestPermission') ?? false;
+  }
+
+  /// Starts the VPN tunnel.
+  Future<bool> start() async {
+    return await vpnChannel.invokeMethod<bool>('start') ?? false;
+  }
+
+  /// Stops the VPN tunnel.
+  Future<bool> stop() async {
+    return await vpnChannel.invokeMethod<bool>('stop') ?? false;
+  }
+
+  /// Initializes the iOS service. The core lives in the extension process, so
+  /// there is nothing to initialize here.
+  Future<String> init() async => '';
+
+  /// Best-effort state sync. iOS keeps state in the shared app group, so this
+  /// is a no-op for now.
+  Future<String> syncState(SharedState state) async => '';
+
+  /// Shuts down: stops the tunnel.
+  Future<bool> shutdown() async {
+    await stop();
+    return true;
+  }
+
+  Future<DateTime?> getRunTime() async {
+    final ms = await vpnChannel.invokeMethod<int>('getRunTime') ?? 0;
+    if (ms == 0) {
+      return null;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  /// Forwards a Core method call to the Go core inside the packet-tunnel
+  /// extension. The AppDelegate relays this through `sendProviderMessage`,
+  /// whose reply is delivered to the extension's handleAppMessage.
+  Future<CoreMethodResponse?> invokeMethod(CoreMethodCall call) async {
+    final data = await coreChannel.invokeMethod<Uint8List>(
+      'invokeMethod',
+      json.encode(call),
+    );
+    if (data == null) {
+      return null;
+    }
+    return resolveSpilledResponse(
+      CoreMethodResponse.fromJson(await _decodeResponse(data, call.method)),
+      method: call.method,
+    );
+  }
+}
+
+IOSService? get iosService => system.isIOS ? IOSService() : null;
