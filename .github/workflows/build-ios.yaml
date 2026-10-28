@@ -44,9 +44,9 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Setup CocoaPods + xcodeproj
+      - name: Setup xcodeproj gem
         run: |
-          gem install cocoapods xcodeproj --no-document
+          gem install xcodeproj --no-document
 
       - name: Build Go core xcframework
         run: bash tool/build_ios_core.sh ios/FlClashCore.xcframework

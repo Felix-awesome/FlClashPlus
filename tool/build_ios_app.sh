@@ -2,6 +2,10 @@
 # Assembles the FlClash iOS app: generates the Flutter iOS project, injects the
 # FlClashService NetworkExtension target, links the Go core xcframework, and
 # builds an unsigned IPA.
+#
+# Flutter 3.44+ uses Swift Package Manager (not CocoaPods) to integrate iOS
+# plugins, so there is no "pod install" step — flutter build ios handles plugin
+# integration via the generated FlutterGeneratedPluginSwiftPackage.
 # Usage: bash build_ios_app.sh [bundle_id] [app_group]
 set -euo pipefail
 
@@ -28,8 +32,6 @@ fail() {
   exit 1
 }
 
-# run <label> <command...>  — capture output; on failure emit a diagnostic
-# annotation whose message includes the tail of the captured log.
 run() {
   local label="$1"
   shift
@@ -39,7 +41,7 @@ run() {
   fi
 }
 
-echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
+echo "=== [1/5] Ensure Flutter iOS project skeleton ==="
 BACKUP_DIR="$(mktemp -d)"
 cp -r "$IOS_DIR" "$BACKUP_DIR/ios.bak" 2>/dev/null || true
 
@@ -51,8 +53,7 @@ for f in \
   "FlClashService/PacketTunnelProvider.swift" \
   "FlClashService/VpnCore.swift" \
   "FlClashService/Info.plist" \
-  "FlClashService/FlClashService.entitlements" \
-  "Podfile"
+  "FlClashService/FlClashService.entitlements"
 do
   if [ -f "$BACKUP_DIR/ios.bak/$f" ]; then
     mkdir -p "$(dirname "$IOS_DIR/$f")"
@@ -60,22 +61,18 @@ do
   fi
 done
 
-echo "=== [2/6] Add FlClashService extension target to Xcode project ==="
+echo "=== [2/5] Add FlClashService extension target to Xcode project ==="
 run "add_ios_extension" ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
   "$IOS_DIR/Runner.xcodeproj" "$BUNDLE_ID" "$APP_GROUP" "$XCFRAMEWORK"
 
-echo "=== [3/6] flutter pub get ==="
+echo "=== [3/5] flutter pub get ==="
 run "flutter pub get" $FLUTTER_CMD pub get
 
-echo "=== [4/6] pod install ==="
-cd "$IOS_DIR"
-run "pod install" pod install
-
-echo "=== [5/6] flutter build ios (unsigned) ==="
+echo "=== [4/5] flutter build ios (unsigned) ==="
 cd "$ROOT_DIR"
 run "flutter build ios" $FLUTTER_CMD build ios --release --no-codesign
 
-echo "=== [6/6] Package unsigned IPA ==="
+echo "=== [5/5] Package unsigned IPA ==="
 cd "$ROOT_DIR/build/ios/iphoneos"
 mkdir -p Payload
 cp -r Runner.app Payload/
