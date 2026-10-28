@@ -372,7 +372,6 @@ abstract class ProxiesData with _$ProxiesData {
       _$ProxiesDataFromJson(json);
 }
 
-
 @freezed
 abstract class SetMitmParams with _$SetMitmParams {
   const factory SetMitmParams({
