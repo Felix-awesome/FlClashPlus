@@ -125,38 +125,38 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         timeout: TimeInterval,
         completion: @escaping (VpnCore?) -> Void
     ) {
-        // `vpnCore` is assigned before its start() finishes, so existence alone
-        // is not readiness: a call answered mid-setup would reach a core whose
-        // config is not applied yet.
-        func readyCore() -> VpnCore? {
-            guard let core = self.vpnCore, core.isReady else {
-                return nil
-            }
-            return core
-        }
-        if let core = readyCore() {
+        pollCore(deadline: Date().addingTimeInterval(timeout), completion: completion)
+    }
+
+    /// One poll step of [waitForCore].
+    ///
+    /// The retry recurses through a method rather than a closure: a closure that
+    /// calls itself cannot be declared in Swift ("closure captures 'poll' before
+    /// it is declared").
+    ///
+    /// `vpnCore` is assigned before its start() finishes, so existence alone is
+    /// not readiness: a call answered mid-setup would reach a core whose config
+    /// is not applied yet.
+    private func pollCore(
+        deadline: Date,
+        completion: @escaping (VpnCore?) -> Void
+    ) {
+        if let core = vpnCore, core.isReady {
             completion(core)
             return
         }
-        let deadline = Date().addingTimeInterval(timeout)
-        let poll: () -> Void = { [weak self] in
-            guard let self = self else {
-                completion(nil)
-                return
-            }
-            if let core = readyCore() {
-                completion(core)
-                return
-            }
-            if Date() >= deadline {
-                completion(nil)
-                return
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
-                poll()
-            }
+        if Date() >= deadline {
+            completion(nil)
+            return
         }
-        poll()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else {
+                // The provider is gone; answer so the caller cannot hang.
+                completion(nil)
+                return
+            }
+            self.pollCore(deadline: deadline, completion: completion)
+        }
     }
 
     /// Turns "198.18.0.1/30" into ("198.18.0.1", "255.255.255.252").
