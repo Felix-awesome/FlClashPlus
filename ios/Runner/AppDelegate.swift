@@ -113,7 +113,7 @@ import NetworkExtension
             let args = call.arguments as? [String: Any] ?? [:]
             saveConfig(args, result: result)
         case "start":
-            start(args, result: result)
+            start(result)
         case "stop":
             stop(result)
         case "getRunTime":
@@ -262,7 +262,7 @@ import NetworkExtension
 
     // MARK: - Start / Stop
 
-    private func start(_ args: [String: Any], result: @escaping FlutterResult) {
+    private func start(_ result: @escaping FlutterResult) {
         loadTunnelManager(createIfMissing: false) { manager, error in
             if let error = error {
                 result(FlutterError(code: "load_failed", message: error.localizedDescription, details: nil))
