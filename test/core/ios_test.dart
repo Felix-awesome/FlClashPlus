@@ -31,29 +31,33 @@ void main() {
 
   group('lifecycle', () {
     test('start saves config and starts the tunnel', () async {
-      when(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .thenAnswer((_) async => true);
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
 
       final result = await core.start();
 
       expect(result.outcome, CoreLifecycleOutcome.applied);
-      verify(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .called(1);
+      verify(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).called(1);
       verify(() => service.start()).called(1);
     });
 
     test('start throws when the tunnel fails to start', () async {
-      when(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .thenAnswer((_) async => true);
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => false);
 
       expect(core.start(), throwsStateError);
     });
 
     test('stop shuts the tunnel down', () async {
-      when(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .thenAnswer((_) async => true);
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
       when(() => service.shutdown()).thenAnswer((_) async => true);
 
@@ -65,8 +69,9 @@ void main() {
     });
 
     test('restart stops then starts', () async {
-      when(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .thenAnswer((_) async => true);
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
       when(() => service.shutdown()).thenAnswer((_) async => true);
 
@@ -79,8 +84,9 @@ void main() {
     });
 
     test('start coalesces when already running', () async {
-      when(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .thenAnswer((_) async => true);
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
 
       await core.start();
@@ -90,8 +96,9 @@ void main() {
     });
 
     test('close marks the core closed and stops the tunnel', () async {
-      when(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .thenAnswer((_) async => true);
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
       when(() => service.shutdown()).thenAnswer((_) async => true);
 
@@ -136,11 +143,13 @@ void main() {
 
   group('invokeMethod', () {
     test('forwards the call and unwraps the result', () async {
-      when(() => service.saveConfig(homeDir: any(named: 'homeDir')))
-          .thenAnswer((_) async => true);
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
-      when(() => service.invokeMethod(any()))
-          .thenAnswer((_) async => const CoreMethodResponse(result: true));
+      when(
+        () => service.invokeMethod(any()),
+      ).thenAnswer((_) async => const CoreMethodResponse(result: true));
 
       await core.start();
       final result = await core.invokeMethod<bool>(
@@ -152,8 +161,9 @@ void main() {
     });
 
     test('returns null when the core never connects', () async {
-      when(() => service.invokeMethod(any()))
-          .thenAnswer((_) async => const CoreMethodResponse(result: true));
+      when(
+        () => service.invokeMethod(any()),
+      ).thenAnswer((_) async => const CoreMethodResponse(result: true));
 
       final result = await core.invokeMethod<bool>(
         method: CoreMethod.getIsInit,
