@@ -58,11 +58,11 @@ run() {
 # iOS. Skip both hooks up front so the first `flutter create`/`pub get` already
 # resolves against the final pubspec (avoiding a mid-script pubspec change that
 # would force `flutter build ios` to re-resolve dependencies).
-if command -v yq >/dev/null 2>&1; then
-  yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
-else
-  sed -i.bak 's/^\(\s*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
-fi
+# NOTE: use sed (a plain text substitution) rather than yq. yq re-serializes the
+# whole file through a YAML-1.1 parser, which can rewrite scalar values (e.g.
+# 'none', 'on'/'off') and silently break the pubspec for pub.
+sed -i.bak 's/^\(\s*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
+rm -f pubspec.yaml.bak
 
 echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
 BACKUP_DIR="$(mktemp -d)"

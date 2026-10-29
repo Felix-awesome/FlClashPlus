@@ -51,10 +51,6 @@ jobs:
       - name: Build Go core xcframework
         run: bash tool/build_ios_core.sh ios/FlClashCore.xcframework
 
-      - name: Skip native build hooks (Go/Rust already built via gomobile)
-        run: |
-          yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
-
       - name: Build iOS app (unsigned)
         run: bash tool/build_ios_app.sh ${{ env.BUNDLE_ID }} ${{ env.APP_GROUP }}
 
