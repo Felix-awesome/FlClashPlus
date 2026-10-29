@@ -72,8 +72,12 @@ final class VpnCore {
 }
 
 /// A gomobile ResultHandler implementation that captures the single result
-/// callback the core delivers.
-private final class ResultCallback: NSObject, MobileResultHandler {
+/// callback the core delivers. gomobile maps the Go `ResultHandler` interface
+/// to the Swift protocol `MobileResultHandlerProtocol` (the `MobileResultHandler`
+/// class is the Go-created concrete instance, not the one Swift implements).
+/// The Go method `OnResult(data []byte) error` becomes the ObjC-interop
+/// signature `func onResult(_ data: Data?, error: NSErrorPointer) -> Bool`.
+private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
     private let lock = NSLock()
     private var buffer = ""
 
@@ -89,6 +93,6 @@ private final class ResultCallback: NSObject, MobileResultHandler {
             buffer = String(data: data, encoding: .utf8) ?? ""
         }
         lock.unlock()
-        return false
+        return true
     }
 }
