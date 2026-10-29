@@ -59,3 +59,13 @@ jobs:
         with:
           name: FlClash-unsigned-ipa
           path: dist/FlClash-unsigned.ipa
+
+      # The flutter build error is otherwise only visible in the runner's step
+      # log (needs admin to download). Publish the full log as an artifact so it
+      # can be inspected without elevated permissions.
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: dist/ios_build.log
