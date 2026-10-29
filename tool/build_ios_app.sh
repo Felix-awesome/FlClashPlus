@@ -71,7 +71,7 @@ run() {
 # NOTE: use sed (a plain text substitution) rather than yq. yq re-serializes the
 # whole file through a YAML-1.1 parser, which can rewrite scalar values (e.g.
 # 'none', 'on'/'off') and silently break the pubspec for pub.
-sed -i.bak 's/^\(\s*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
+sed -i.bak 's/^\([[:space:]]*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
 rm -f pubspec.yaml.bak
 
 echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
