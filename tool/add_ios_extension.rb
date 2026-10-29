@@ -62,6 +62,9 @@ ext_target.build_configurations.each do |config|
   config.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
   config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'
   config.build_settings['FRAMEWORK_SEARCH_PATHS'] = '$(PROJECT_DIR)'
+  # Go runtime's net resolver (res_9_ninit/nsearch/nclose) lives in libresolv;
+  # the Network Extension target must link it or the xcframework fails to link.
+  config.build_settings['OTHER_LDFLAGS'] = '-lresolv'
 end
 
 # --- Add source files to the extension target ---
