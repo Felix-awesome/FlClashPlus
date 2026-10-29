@@ -110,6 +110,27 @@ runner_embed.add_file_reference(ext_product)
 
 runner_target.add_dependency(ext_target)
 
+# --- Break the Xcode build cycle ---
+# Xcode reports "Cycle inside Runner" when the appex copy phase runs after
+# Flutter's "Thin Binary" script phase: Thin Binary takes Runner.app/Info.plist
+# as an input, while Info.plist processing ends up depending on the embedded
+# appex. xcodeproj appends new build phases at the end of the list, so the
+# embed phase we just created always lands after Thin Binary. Move it above.
+thin_binary = runner_target.build_phases.find do |phase|
+  next false unless phase.respond_to?(:shell_script)
+  phase.display_name == 'Thin Binary' ||
+    phase.shell_script.to_s.include?('embed_and_thin')
+end
+
+if thin_binary
+  phases = runner_target.build_phases
+  if phases.index(runner_embed) > phases.index(thin_binary)
+    phases.delete(runner_embed)
+    phases.insert(phases.index(thin_binary), runner_embed)
+    puts "Moved '#{runner_embed.display_name}' above 'Thin Binary' to break the Xcode build cycle"
+  end
+end
+
 project.save
 
 puts "Configured Runner (#{bundle_id}) and added #{ext_name} extension (#{bundle_id}.FlClashService)"
