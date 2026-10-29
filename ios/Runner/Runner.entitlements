@@ -6,9 +6,9 @@
 	<array>
 		<string>group.com.follow.clash</string>
 	</array>
-	<key>com.apple.developer.networking.vpn.api</key>
+	<key>com.apple.developer.networking.networkextension</key>
 	<array>
-		<string>allow-vpn</string>
+		<string>packet-tunnel-provider</string>
 	</array>
 </dict>
 </plist>

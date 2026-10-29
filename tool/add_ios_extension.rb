@@ -53,7 +53,10 @@ runner_target.build_configurations.each do |config|
   config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
   config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
   config.build_settings['CODE_SIGN_IDENTITY'] = ''
-  # Use our entitlements (App Group + Personal VPN) for the host app.
+  # Use our entitlements (App Group + packet-tunnel-provider) for the host app.
+  # The provider entitlement is what lets NETunnelProviderManager manage the
+  # extension's configuration; the older allow-vpn key only covers Personal VPN
+  # and makes the very first load fail with "permission denied".
   runner_ent = File.join(ios_dir, 'Runner', 'Runner.entitlements')
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements' if File.exist?(runner_ent)
 end
