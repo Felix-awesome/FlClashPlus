@@ -69,6 +69,32 @@ jobs:
           name: FlClash-unsigned-ipa
           path: dist/FlClash-unsigned.ipa
 
+      # Cheap verification: publish the processed Info.plists so the appex
+      # bundle id / version / executable keys can be checked without pulling
+      # the ~52MB IPA down.
+      - name: Dump IPA metadata
+        if: always()
+        run: |
+          mkdir -p /tmp/ipadump
+          cd /tmp/ipadump
+          unzip -o -q "$GITHUB_WORKSPACE/dist/FlClash-unsigned.ipa" \
+            "Payload/Runner.app/Info.plist" \
+            "Payload/Runner.app/PlugIns/FlClashService.appex/Info.plist" || true
+          {
+            echo "== Runner.app =="
+            plutil -p Payload/Runner.app/Info.plist || true
+            echo
+            echo "== FlClashService.appex =="
+            plutil -p Payload/Runner.app/PlugIns/FlClashService.appex/Info.plist || true
+          } > "$GITHUB_WORKSPACE/dist/ipa_info.txt"
+
+      - name: Upload IPA metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa-metadata
+          path: dist/ipa_info.txt
+
       # The flutter build error is otherwise only visible in the runner's step
       # log (needs admin to download). Publish the full log as an artifact so it
       # can be inspected without elevated permissions.
