@@ -45,13 +45,24 @@ run() {
   local label="$1"
   shift
   echo "=== [$label] ==="
-  "$@" 2>&1 | tee "$LOG_FILE"
-  # Under `set -o pipefail` the pipeline's status is the failing command's, so
-  # checking $? directly is enough; tee itself essentially never fails.
-  if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+  # Tee to stdout (step log) + LOG_FILE. The pipeline must not trigger `set -e`
+  # before we can capture the exit status, so guard it with a conditional.
+  if ! "$@" 2>&1 | tee "$LOG_FILE"; then
     fail "$label"
   fi
 }
+
+# The Go core is already built as FlClashCore.xcframework (gomobile bind), and
+# the iOS core talks to the app over MethodChannel -- the desktop/Android
+# native assets (setup's Go build, rust_api's IPC/rquickjs) are not needed on
+# iOS. Skip both hooks up front so the first `flutter create`/`pub get` already
+# resolves against the final pubspec (avoiding a mid-script pubspec change that
+# would force `flutter build ios` to re-resolve dependencies).
+if command -v yq >/dev/null 2>&1; then
+  yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
+else
+  sed -i.bak 's/^\(\s*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
+fi
 
 echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
 BACKUP_DIR="$(mktemp -d)"
@@ -82,17 +93,6 @@ run "add_ios_extension" ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
 
 echo "=== [4/6] flutter pub get (restore SPM integration) ==="
 run "flutter pub get" $FLUTTER_CMD pub get
-
-# The Go core is already built as FlClashCore.xcframework (gomobile bind), and
-# the iOS core talks to the app over MethodChannel -- the desktop/Android
-# native assets (setup's Go build, rust_api's IPC/rquickjs) are not needed on
-# iOS. Skip both hooks so `flutter build ios` does not try to cross-compile
-# them (rust_api's Cargo.toml has no iOS target config and would fail).
-if command -v yq >/dev/null 2>&1; then
-  yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
-else
-  sed -i.bak 's/^\(\s*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
-fi
 
 echo "=== [5/6] flutter build ios (unsigned) ==="
 cd "$ROOT_DIR"
