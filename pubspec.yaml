@@ -15,7 +15,7 @@ hooks:
 dependencies:
   flutter:
     sdk: flutter
-  material_ui: ^1.5.0
+  material_ui: 1.5.0
   intl: any
   path_provider: ^2.1.6
   path: ^1.9.1
