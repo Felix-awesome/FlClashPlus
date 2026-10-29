@@ -27,21 +27,28 @@ fail() {
   local label="$1"
   local msg="iOS build failed at: ${label}"
   if [ -f "$LOG_FILE" ]; then
-    # Dump the WHOLE log (flutter build ios logs are short) so the real error
-    # is visible in the annotation. Escape % \r \n for ::error::.
-    local full
-    full="$(cat "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-    msg="${msg}%0A%0A--- FULL LOG ---%0A${full}"
+    # Emit the TAIL of the log (the real error is at the end, not under the
+    # leading "Resolving dependencies..." line). Escape % \r \n for ::error::.
+    local detail
+    detail="$(tail -100 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+    msg="${msg}%0A%0A--- LOG TAIL (last 100 lines) ---%0A${detail}"
   fi
   echo "::error::${msg}" >&2
   exit 1
 }
 
+# run_capture runs a command, teeing output to BOTH stdout (so it lands in the
+# step log) and LOG_FILE (so fail() can quote it). This matters because the
+# flutter build ios error is otherwise only visible inside LOG_FILE, which the
+# runner's step log does not show.
 run() {
   local label="$1"
   shift
   echo "=== [$label] ==="
-  if ! "$@" > "$LOG_FILE" 2>&1; then
+  "$@" 2>&1 | tee "$LOG_FILE"
+  # Under `set -o pipefail` the pipeline's status is the failing command's, so
+  # checking $? directly is enough; tee itself essentially never fails.
+  if [ "${PIPESTATUS[0]}" -ne 0 ]; then
     fail "$label"
   fi
 }
