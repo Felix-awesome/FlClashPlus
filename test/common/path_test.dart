@@ -223,4 +223,61 @@ void main() {
       },
     );
   });
+
+  group('temporary directory', () {
+    late Directory fallback;
+    late Directory group;
+
+    setUp(() {
+      fallback = Directory.systemTemp.createTempSync('tmp_fallback');
+      group = Directory.systemTemp.createTempSync('tmp_group');
+    });
+
+    tearDown(() {
+      for (final directory in [fallback, group]) {
+        if (directory.existsSync()) {
+          directory.deleteSync(recursive: true);
+        }
+      }
+    });
+
+    test('off iOS the system temp directory is kept', () async {
+      var groupAsked = false;
+
+      final resolved = await AppPath.resolveTemporaryDirectory(
+        isIOS: false,
+        fallback: () async => fallback,
+        appGroupHomeDir: () async {
+          groupAsked = true;
+          return group.path;
+        },
+      );
+
+      expect(resolved.path, fallback.path);
+      expect(groupAsked, isFalse);
+    });
+
+    test('on iOS scratch files move into the shared container', () async {
+      final resolved = await AppPath.resolveTemporaryDirectory(
+        isIOS: true,
+        fallback: () async => fallback,
+        appGroupHomeDir: () async => group.path,
+      );
+
+      expect(resolved.path, join(group.path, 'tmp'));
+      expect(resolved.existsSync(), isTrue);
+    });
+
+    test('a missing group path keeps the system temp directory', () async {
+      for (final groupPath in <String?>[null, '']) {
+        final resolved = await AppPath.resolveTemporaryDirectory(
+          isIOS: true,
+          fallback: () async => fallback,
+          appGroupHomeDir: () async => groupPath,
+        );
+
+        expect(resolved.path, fallback.path);
+      }
+    });
+  });
 }

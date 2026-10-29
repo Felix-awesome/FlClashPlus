@@ -40,7 +40,7 @@ class AppPath {
 
   @visibleForTesting
   static Future<Directory> Function() temporaryDirectory =
-      getTemporaryDirectory;
+      _defaultTemporaryDirectory;
 
   @visibleForTesting
   static Future<Directory> Function() cacheDirectory =
@@ -110,6 +110,41 @@ class AppPath {
     return resolveSupportDirectory(
       isIOS: Platform.isIOS,
       fallback: getApplicationSupportDirectory,
+      appGroupHomeDir: () => appGroupHomeDirPath(),
+    );
+  }
+
+  /// Resolves the directory temporary files go to.
+  ///
+  /// iOS hands several of them to the core for validation, and the core runs in
+  /// the extension's sandbox, which cannot read the app's own tmp directory.
+  /// Keeping scratch files in the shared container is what lets a config that is
+  /// still being edited be validated at all.
+  @visibleForTesting
+  static Future<Directory> resolveTemporaryDirectory({
+    required bool isIOS,
+    required Future<Directory> Function() fallback,
+    required Future<String?> Function() appGroupHomeDir,
+  }) async {
+    final directory = await fallback();
+    if (!isIOS) {
+      return directory;
+    }
+    final groupPath = await appGroupHomeDir();
+    if (groupPath == null || groupPath.isEmpty) {
+      return directory;
+    }
+    final shared = Directory(join(groupPath, 'tmp'));
+    if (!await shared.exists()) {
+      await shared.create(recursive: true);
+    }
+    return shared;
+  }
+
+  static Future<Directory> _defaultTemporaryDirectory() {
+    return resolveTemporaryDirectory(
+      isIOS: Platform.isIOS,
+      fallback: getTemporaryDirectory,
       appGroupHomeDir: () => appGroupHomeDirPath(),
     );
   }
