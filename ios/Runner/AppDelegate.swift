@@ -5,6 +5,7 @@ import NetworkExtension
 @main
 @objc class AppDelegate: FlutterAppDelegate {
     private static let vpnChannel = "com.follow.clash/ios_vpn"
+    private static let coreChannel = "com.follow.clash/core"
 
     override func application(
         _ application: UIApplication,
@@ -22,6 +23,17 @@ import NetworkExtension
         )
         channel.setMethodCallHandler { [weak self] call, result in
             self?.handle(call, result: result)
+        }
+
+        // The Go core lives inside the packet-tunnel extension, so core method
+        // calls are relayed through sendProviderMessage and answered by the
+        // extension's handleAppMessage.
+        let core = FlutterMethodChannel(
+            name: Self.coreChannel,
+            binaryMessenger: controller.binaryMessenger
+        )
+        core.setMethodCallHandler { [weak self] call, result in
+            self?.handleCore(call, result: result)
         }
 
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
@@ -164,6 +176,46 @@ import NetworkExtension
                     result(true)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Core relay
+extension AppDelegate {
+
+    /// Relays a JSON core method call (e.g. "getConfig", "changeProxy") to the
+    /// Go core inside the tunnel extension and returns its raw JSON reply.
+    func handleCore(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard call.method == "invokeMethod" else {
+            result(FlutterMethodNotImplemented)
+            return
+        }
+        guard let payload = call.arguments as? String,
+              let data = payload.data(using: .utf8) else {
+            result(FlutterError(code: "bad_arguments",
+                message: "expected a JSON string", details: nil))
+            return
+        }
+        guard let session = NEVPNManager.shared().connection as? NETunnelProviderSession else {
+            result(FlutterError(code: "no_session",
+                message: "the tunnel is not configured or not running", details: nil))
+            return
+        }
+        do {
+            try session.sendProviderMessage(data) { response in
+                // The reply arrives on a background queue; FlutterResult must
+                // be invoked on the main thread.
+                DispatchQueue.main.async {
+                    if let response = response {
+                        result(FlutterStandardTypedData(bytes: response))
+                    } else {
+                        result(nil)
+                    }
+                }
+            }
+        } catch {
+            result(FlutterError(code: "send_failed",
+                message: error.localizedDescription, details: nil))
         }
     }
 }
