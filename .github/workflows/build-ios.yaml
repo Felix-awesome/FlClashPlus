@@ -75,7 +75,7 @@ jobs:
       - name: Dump IPA metadata
         if: always()
         run: |
-          mkdir -p /tmp/ipadump
+          mkdir -p /tmp/ipadump "$GITHUB_WORKSPACE/dist"
           cd /tmp/ipadump
           unzip -o -q "$GITHUB_WORKSPACE/dist/FlClash-unsigned.ipa" \
             "Payload/Runner.app/Info.plist" \
