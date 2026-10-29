@@ -27,18 +27,29 @@ fail() {
   local label="$1"
   local msg="iOS build failed at: ${label}"
   if [ -f "$LOG_FILE" ]; then
-    # Emit the TAIL of the log (the real error is at the end, not under the
-    # leading "Resolving dependencies..." line). Escape % \r \n for ::error::.
-    local detail
-    detail="$(tail -100 "$LOG_FILE" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-    msg="${msg}%0A%0A--- LOG TAIL (last 100 lines) ---%0A${detail}"
+    # Emit the TAIL of the log plus any compiler/xcodebuild error lines. The
+    # real error is usually at the end, but flutter swallows xcodebuild output
+    # when the build dies very early, so also surface matched error keywords.
+    local detail tail_lines err_lines
+    tail_lines="$(tail -200 "$LOG_FILE")"
+    err_lines="$(grep -nE 'error:|fatal error:|BUILD FAILED|ld: |Undefined symbol|No such module|CompileSwift|CompileC|Error \(Xcode\)|Failed to build' "$LOG_FILE" | tail -80 || true)"
+    detail="${tail_lines}"
+    if [ -n "$err_lines" ]; then
+      detail="${detail}
+=== ERROR LINES ===
+${err_lines}"
+    fi
+    detail="$(printf '%s' "$detail" | sed 's/%/%25/g; s//%0D/g; s/
+/%0A/g')"
+    msg="${msg}%0A%0A--- LOG (tail 200 + error lines) ---%0A${detail}"
   fi
   echo "::error::${msg}" >&2
   exit 1
 }
 
 # run_capture runs a command, teeing output to BOTH stdout (so it lands in the
-# step log) and LOG_FILE (so fail() can quote it). This matters because the
+# step log) and LOG_FILE (so fail() can quote it, and the artifact upload in
+# the workflow can publish the full log). This matters because the
 # flutter build ios error is otherwise only visible inside LOG_FILE, which the
 # runner's step log does not show.
 run() {
@@ -94,9 +105,11 @@ run "add_ios_extension" ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
 echo "=== [4/6] flutter pub get (restore SPM integration) ==="
 run "flutter pub get" $FLUTTER_CMD pub get
 
-echo "=== [5/6] flutter build ios (unsigned) ==="
+echo "=== [5/6] flutter build ios (unsigned, verbose) ==="
 cd "$ROOT_DIR"
-run "flutter build ios" $FLUTTER_CMD build ios --release --no-codesign
+# -v prints the full xcodebuild invocation and its output, which is the only
+# way to see why the build dies before emitting any Swift compile errors.
+run "flutter build ios" $FLUTTER_CMD build ios --release --no-codesign -v
 
 echo "=== [6/6] Package unsigned IPA ==="
 cd "$ROOT_DIR/build/ios/iphoneos"
