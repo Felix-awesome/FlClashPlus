@@ -17,9 +17,7 @@ void main() {
 
   late List<MethodCall> calls;
 
-  void mockVpnChannel(
-    Future<Object?>? Function(MethodCall call) handler,
-  ) {
+  void mockVpnChannel(Future<Object?>? Function(MethodCall call) handler) {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(vpnChannel, (call) async {
           calls.add(call);
@@ -27,9 +25,7 @@ void main() {
         });
   }
 
-  void mockCoreChannel(
-    Future<Object?>? Function(MethodCall call) handler,
-  ) {
+  void mockCoreChannel(Future<Object?>? Function(MethodCall call) handler) {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(coreChannel, (call) async {
           calls.add(call);
@@ -75,10 +71,7 @@ void main() {
     test('forwards the config and returns the platform result', () async {
       mockVpnChannel((_) async => true);
 
-      expect(
-        await IOSService().saveConfig(homeDir: '/tmp/home'),
-        isTrue,
-      );
+      expect(await IOSService().saveConfig(homeDir: '/tmp/home'), isTrue);
 
       final args = calls.single.arguments as Map;
       expect(calls.single.method, 'saveConfig');
