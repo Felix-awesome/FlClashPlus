@@ -34,7 +34,7 @@ app_version = '1.0.0'
 app_build = '1'
 if File.exist?(pubspec_path)
   File.foreach(pubspec_path) do |line|
-    if line =~ /^\s*version://s*([0-9][^//s+#]*)(?://+([0-9][^//s+#]*))?/
+    if line =~ /^[[:space:]]*version:[[:space:]]*([0-9][^[:space:]+#]*)(?:[+]([0-9][^[:space:]+#]*))?/
       app_version = Regexp.last_match(1)
       app_build = Regexp.last_match(2) || '1'
       break
