@@ -37,6 +37,10 @@ import NetworkExtension
 
     // MARK: - Channels
 
+    /// Set once both channels have a handler installed. Only used to decide
+    /// whether the activation-time retry below still has work to do.
+    private var channelsRegistered = false
+
     /// Registers the VPN and core method channels.
     ///
     /// The messenger comes from the plugin registrar rather than from
@@ -73,6 +77,18 @@ import NetworkExtension
         )
         core.setMethodCallHandler { [weak self] call, result in
             self?.handleCore(call, result: result)
+        }
+
+        channelsRegistered = true
+    }
+
+    override func applicationDidBecomeActive(_ application: UIApplication) {
+        super.applicationDidBecomeActive(application)
+        // A UIScene launch only builds the window once the app becomes active,
+        // so give the channels a second chance here when the launch-time
+        // registration found no messenger.
+        if !channelsRegistered {
+            registerChannels()
         }
     }
 
