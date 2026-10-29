@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -133,6 +132,9 @@ class MitmView extends ConsumerWidget {
         // The picker was dismissed: keep the PEM on the clipboard so the copy
         // is still reachable for a manual install.
         await Clipboard.setData(ClipboardData(text: cert));
+        if (!context.mounted) {
+          return;
+        }
         await dialogs.showMessage(
           message: TextSpan(text: appLocalizations.mitmCertCopied),
           context: context,

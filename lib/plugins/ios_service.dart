@@ -35,7 +35,10 @@ Future<Map<String, Object?>> _decodeResponse(
 const _channelRetryAttempts = 5;
 const _channelRetryDelay = Duration(milliseconds: 100);
 
-Future<T> _invokeWithRetry<T>(Future<T> Function() invoke) async {
+/// Retries a channel call that reports [MissingPluginException], which is what
+/// a platform answers while its handler has not been installed yet. The result
+/// stays nullable because `invokeMethod<T>` itself returns `T?`.
+Future<T?> _invokeWithRetry<T>(Future<T?> Function() invoke) async {
   for (var attempt = 1; ; attempt++) {
     try {
       return await invoke();
