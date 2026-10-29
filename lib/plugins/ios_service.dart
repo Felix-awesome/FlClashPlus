@@ -28,6 +28,26 @@ Future<Map<String, Object?>> _decodeResponse(
   return compute(_decodeResponseOf, (data, method));
 }
 
+/// The platform channels are registered while the app is launching, which can
+/// land just after the Dart entry point starts running. A call made in that
+/// window reports MissingPluginException even though the handler does exist, so
+/// such a call is retried briefly instead of failing the very first launch.
+const _channelRetryAttempts = 5;
+const _channelRetryDelay = Duration(milliseconds: 100);
+
+Future<T> _invokeWithRetry<T>(Future<T> Function() invoke) async {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      return await invoke();
+    } on MissingPluginException {
+      if (attempt >= _channelRetryAttempts) {
+        rethrow;
+      }
+      await Future<void>.delayed(_channelRetryDelay);
+    }
+  }
+}
+
 /// The iOS counterpart of the Android [Service]: it drives the
 /// NetworkExtension tunnel via NEVPNManager (through the AppDelegate method
 /// channel) and forwards Core method calls to the Go core running inside the
@@ -54,8 +74,8 @@ class IOSService {
   /// Whether the VPN tunnel is currently connected or connecting.
   Future<bool> getStatus() async {
     try {
-      final status = await vpnChannel.invokeMapMethod<String, Object?>(
-        'getStatus',
+      final status = await _invokeWithRetry(
+        () => vpnChannel.invokeMapMethod<String, Object?>('getStatus'),
       );
       return status?['running'] as bool? ?? false;
     } catch (_) {
@@ -71,29 +91,40 @@ class IOSService {
     String dns = '198.18.0.1',
     Map<String, Object?> options = const {},
   }) async {
-    return await vpnChannel.invokeMethod<bool>('saveConfig', {
-          'homeDir': homeDir,
-          'stack': stack,
-          'address': address,
-          'dns': dns,
-          'options': options,
-        }) ??
+    return await _invokeWithRetry(
+          () => vpnChannel.invokeMethod<bool>('saveConfig', {
+            'homeDir': homeDir,
+            'stack': stack,
+            'address': address,
+            'dns': dns,
+            'options': options,
+          }),
+        ) ??
         false;
   }
 
   /// Requests the system VPN permission (triggers the NEVPNManager dialog).
   Future<bool> requestPermission() async {
-    return await vpnChannel.invokeMethod<bool>('requestPermission') ?? false;
+    return await _invokeWithRetry(
+          () => vpnChannel.invokeMethod<bool>('requestPermission'),
+        ) ??
+        false;
   }
 
   /// Starts the VPN tunnel.
   Future<bool> start() async {
-    return await vpnChannel.invokeMethod<bool>('start') ?? false;
+    return await _invokeWithRetry(
+          () => vpnChannel.invokeMethod<bool>('start'),
+        ) ??
+        false;
   }
 
   /// Stops the VPN tunnel.
   Future<bool> stop() async {
-    return await vpnChannel.invokeMethod<bool>('stop') ?? false;
+    return await _invokeWithRetry(
+          () => vpnChannel.invokeMethod<bool>('stop'),
+        ) ??
+        false;
   }
 
   /// Initializes the iOS service. The core lives in the extension process, so
@@ -111,7 +142,11 @@ class IOSService {
   }
 
   Future<DateTime?> getRunTime() async {
-    final ms = await vpnChannel.invokeMethod<int>('getRunTime') ?? 0;
+    final ms =
+        await _invokeWithRetry(
+          () => vpnChannel.invokeMethod<int>('getRunTime'),
+        ) ??
+        0;
     if (ms == 0) {
       return null;
     }
@@ -140,6 +175,11 @@ class IOSService {
           rethrow;
         }
         await Future.delayed(const Duration(milliseconds: 200));
+      } on MissingPluginException {
+        if (attempt >= _channelRetryAttempts - 1) {
+          rethrow;
+        }
+        await Future.delayed(_channelRetryDelay);
       }
     }
     if (data == null) {

@@ -31,16 +31,36 @@ import NetworkExtension
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         GeneratedPluginRegistrant.register(with: self)
+        registerChannels()
+        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
 
-        guard let controller = window?.rootViewController as? FlutterViewController else {
-            return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    // MARK: - Channels
+
+    /// Registers the VPN and core method channels.
+    ///
+    /// The messenger comes from the plugin registrar rather than from
+    /// `window?.rootViewController`: the registrar is backed by the engine the
+    /// Flutter view runs on, so it is available even when the window is not
+    /// wired up yet. Depending on `window` here left both channels unregistered
+    /// whenever the app was launched through a UIScene, and every call from Dart
+    /// then failed with MissingPluginException.
+    private func registerChannels() {
+        var messenger: FlutterBinaryMessenger?
+        if let registrar = self.registrar(forPlugin: "FlClashChannels") {
+            messenger = registrar.messenger()
+        } else if let controller = window?.rootViewController as? FlutterViewController {
+            messenger = controller.binaryMessenger
+        }
+        guard let messenger = messenger else {
+            return
         }
 
-        let channel = FlutterMethodChannel(
+        let vpn = FlutterMethodChannel(
             name: Self.vpnChannel,
-            binaryMessenger: controller.binaryMessenger
+            binaryMessenger: messenger
         )
-        channel.setMethodCallHandler { [weak self] call, result in
+        vpn.setMethodCallHandler { [weak self] call, result in
             self?.handle(call, result: result)
         }
 
@@ -49,13 +69,11 @@ import NetworkExtension
         // extension's handleAppMessage.
         let core = FlutterMethodChannel(
             name: Self.coreChannel,
-            binaryMessenger: controller.binaryMessenger
+            binaryMessenger: messenger
         )
         core.setMethodCallHandler { [weak self] call, result in
             self?.handleCore(call, result: result)
         }
-
-        return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
 
     // MARK: - Method channel dispatch

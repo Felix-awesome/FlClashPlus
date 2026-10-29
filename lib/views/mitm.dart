@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -9,6 +12,10 @@ import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// The file name offered when the MITM root CA is exported. A .crt extension
+/// is what both iOS and Android recognise as an installable certificate.
+const mitmCertificateFileName = 'FlClash-MITM-CA.crt';
 
 /// MITM 重写（Quantumult X 式）设置视图。
 ///
@@ -110,19 +117,36 @@ class MitmView extends ConsumerWidget {
   }
 
   Future<void> _exportCertificate(BuildContext context, WidgetRef ref) async {
+    final appLocalizations = context.appLocalizations;
     try {
       final cert = await ref.read(coreHandlerProvider).getMitmCertificate();
-      await Clipboard.setData(ClipboardData(text: cert));
-      if (context.mounted) {
+      // Save a real file rather than only copying the PEM text: neither iOS
+      // nor Android can install a certificate straight from the clipboard.
+      final uri = await picker.saveFile(
+        mitmCertificateFileName,
+        Uint8List.fromList(utf8.encode(cert)),
+      );
+      if (!context.mounted) {
+        return;
+      }
+      if (uri == null) {
+        // The picker was dismissed: keep the PEM on the clipboard so the copy
+        // is still reachable for a manual install.
+        await Clipboard.setData(ClipboardData(text: cert));
         await dialogs.showMessage(
-          message: TextSpan(text: context.appLocalizations.mitmCertCopied),
+          message: TextSpan(text: appLocalizations.mitmCertCopied),
           context: context,
         );
+        return;
       }
+      await dialogs.showMessage(
+        message: TextSpan(text: appLocalizations.exportSuccess),
+        context: context,
+      );
     } catch (_) {
       if (context.mounted) {
         await dialogs.showMessage(
-          message: TextSpan(text: context.appLocalizations.mitmCertError),
+          message: TextSpan(text: appLocalizations.mitmCertError),
           context: context,
         );
       }
