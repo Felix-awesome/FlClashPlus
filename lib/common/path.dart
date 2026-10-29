@@ -13,9 +13,9 @@ import 'package:path_provider/path_provider.dart';
 const _iosVpnChannelName = '$packageName/ios_vpn';
 
 Future<String?> _requestAppGroupHomeDirPath() async {
+  const channel = MethodChannel(_iosVpnChannelName);
   try {
-    return await const MethodChannel(_iosVpnChannelName)
-        .invokeMethod<String>('getHomeDir');
+    return await channel.invokeMethod<String>('getHomeDir');
   } catch (_) {
     return null;
   }
