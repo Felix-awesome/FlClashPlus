@@ -5,8 +5,8 @@ import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/ios.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/plugins/ios_service.dart';
-import 'package:mocktail/mocktail.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 
 final class _MockIOSService extends Mock implements IOSService {}
 
