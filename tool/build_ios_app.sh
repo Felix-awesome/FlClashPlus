@@ -39,8 +39,7 @@ fail() {
 === ERROR LINES ===
 ${err_lines}"
     fi
-    detail="$(printf '%s' "$detail" | sed 's/%/%25/g; s//%0D/g; s/
-/%0A/g')"
+    detail="$(printf '%s' "$detail" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
     msg="${msg}%0A%0A--- LOG (tail 200 + error lines) ---%0A${detail}"
   fi
   echo "::error::${msg}" >&2
