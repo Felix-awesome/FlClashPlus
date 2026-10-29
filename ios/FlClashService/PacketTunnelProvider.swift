@@ -18,9 +18,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        let homeDir = providerConfig["home-dir"] as? String
+        guard let homeDir = providerConfig["home-dir"] as? String
             ?? FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: VpnCore.appGroup)?
                 .appendingPathComponent("Library/Application Support/flclash", isDirectory: true).path
+        else {
+            completionHandler(NSError(domain: "FlClash", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "unable to resolve home dir"]))
+            return
+        }
 
         let core = VpnCore(homeDir: homeDir)
         self.vpnCore = core
