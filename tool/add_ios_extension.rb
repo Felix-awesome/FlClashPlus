@@ -23,9 +23,31 @@ ios_dir = File.dirname(proj_path)
 runner_target = project.targets.find { |t| t.name == 'Runner' }
 abort "Runner target not found" unless runner_target
 
+# --- Resolve the app version from pubspec.yaml ---
+# iOS refuses to install an app extension whose CFBundleShortVersionString /
+# CFBundleVersion differ from (or are empty relative to) the host app. Flutter
+# only exports FLUTTER_BUILD_NAME/FLUTTER_BUILD_NUMBER into Runner's xcconfig,
+# so the new extension target has no version of its own; read pubspec instead
+# and pin MARKETING_VERSION / CURRENT_PROJECT_VERSION on the extension.
+pubspec_path = File.join(File.dirname(ios_dir), 'pubspec.yaml')
+app_version = '1.0.0'
+app_build = '1'
+if File.exist?(pubspec_path)
+  File.foreach(pubspec_path) do |line|
+    if line =~ /^\s*version://s*([0-9][^//s+#]*)(?://+([0-9][^//s+#]*))?/
+      app_version = Regexp.last_match(1)
+      app_build = Regexp.last_match(2) || '1'
+      break
+    end
+  end
+end
+puts "App version: #{app_version} (#{app_build})"
+
 # --- Configure Runner host app: bundle id + entitlements ---
 runner_target.build_configurations.each do |config|
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = bundle_id
+  config.build_settings['MARKETING_VERSION'] = app_version
+  config.build_settings['CURRENT_PROJECT_VERSION'] = app_build
   # Unsigned CI build: the IPA is sideloaded (e.g. AltStore/TrollStore) and
   # signed by the user, so disable code signing for every target.
   config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
@@ -38,8 +60,12 @@ end
 
 # --- Build the FlClashService extension target (if not already present) ---
 ext_name = 'FlClashService'
-if project.targets.any? { |t| t.name == ext_name }
-  puts "target #{ext_name} already exists, skipping creation"
+if (existing_ext = project.targets.find { |t| t.name == ext_name })
+  existing_ext.build_configurations.each do |config|
+    config.build_settings['MARKETING_VERSION'] = app_version
+    config.build_settings['CURRENT_PROJECT_VERSION'] = app_build
+  end
+  puts "target #{ext_name} already exists, refreshed version settings"
   project.save
   exit 0
 end
@@ -48,6 +74,8 @@ ext_target = project.new_target(:app_extension, ext_name, :ios, '13.0')
 
 ext_target.build_configurations.each do |config|
   config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "#{bundle_id}.FlClashService"
+  config.build_settings['MARKETING_VERSION'] = app_version
+  config.build_settings['CURRENT_PROJECT_VERSION'] = app_build
   config.build_settings['PRODUCT_NAME'] = ext_name
   config.build_settings['INFOPLIST_FILE'] = 'FlClashService/Info.plist'
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'FlClashService/FlClashService.entitlements'
