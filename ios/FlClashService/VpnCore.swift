@@ -12,40 +12,57 @@ final class VpnCore {
     static let appGroup = "group.com.follow.clash"
 
     private let homeDir: String
+    private let stack: String
+    private let address: String
+    private let dns: String
+    private let mtu: Int
     private var started = false
 
-    init(homeDir: String) {
+    init(homeDir: String,
+         stack: String = "gvisor",
+         address: String = "198.18.0.1/30",
+         dns: String = "198.18.0.1",
+         mtu: Int = 9000) {
         self.homeDir = homeDir
+        self.stack = stack
+        self.address = address
+        self.dns = dns
+        self.mtu = mtu
     }
 
     /// Initializes the core and starts the tunnel on the packet flow's utun
     /// socket. This mirrors clashmi's approach: read the packet flow's private
     /// "socket.fileDescriptor" and hand it to the Go tun stack.
     func start(packetFlow: NEPacketTunnelFlow, tunnelProvider: NEPacketTunnelProvider) throws {
-        // 1. Initialize the core (home dir + config path come from the app).
         try FileManager.default.createDirectory(
             atPath: homeDir, withIntermediateDirectories: true)
 
-        let initParams = #"{"home-dir":"\#(homeDir)","version":1}"#
-        let setupParams = #"{"selected-map":{},"test-url":"http://www.gstatic.com/generate_204","skip-cert-verify":false}"#
+        // JSON is produced by JSONSerialization rather than string literals so
+        // there is no hand-rolled escaping to get wrong.
+        let initParams = VpnCore.jsonString([
+            "home-dir": homeDir,
+            "version": 1,
+        ])
+        let setupParams = VpnCore.jsonString([
+            "selected-map": [String: Any](),
+            "test-url": "http://www.gstatic.com/generate_204",
+            "skip-cert-verify": false,
+        ])
 
         // QuickSetup is fire-and-forget on iOS; completion is delivered through
         // the ResultHandler callback.
         let resultHandler = ResultCallback()
         MobileQuickSetup(initParams, setupParams, resultHandler)
 
-        // 2. Start the tunnel. The utun fd comes from the packet flow.
         guard let fd = tunnelProvider.packetFlow.value(forKeyPath: "socket.fileDescriptor") as? Int32 else {
             throw NSError(domain: "FlClash", code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "unable to obtain packet flow file descriptor"])
         }
 
-        // These values are placeholders the app overrides with real config
-        // before starting the tunnel; see the containing app's VPN manager.
-        let stack = "gvisor"
-        let address = "198.18.0.1/30"
-        let dns = "198.18.0.1"
-        let options = #"{"mtu":9000,"congestion-controller":""}"#
+        let options = VpnCore.jsonString([
+            "mtu": mtu,
+            "congestion-controller": "",
+        ])
 
         let ok = MobileStartTun(fd, stack, address, dns, options)
         if !ok {
@@ -68,6 +85,14 @@ final class VpnCore {
         let callback = ResultCallback()
         MobileInvokeMethod(json, callback)
         return callback.result
+    }
+
+    private static func jsonString(_ object: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
     }
 }
 
