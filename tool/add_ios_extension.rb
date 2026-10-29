@@ -65,7 +65,15 @@ ext_target.build_configurations.each do |config|
 end
 
 # --- Add source files to the extension target ---
+# The FlClashService group must resolve to ios/FlClashService/ so xcodebuild
+# finds PacketTunnelProvider.swift and VpnCore.swift there. find_subpath only
+# creates a bare group whose path is unset; unless we give it a path the files
+# are looked up at ios/ instead of ios/FlClashService/ and the build fails with
+# "Build input files cannot be found".
 src_group = project.main_group.find_subpath('FlClashService', true)
+src_group.path = 'FlClashService'
+src_group.source_tree = '<group>'
+
 %w[PacketTunnelProvider.swift VpnCore.swift].each do |name|
   path = File.join(ios_dir, 'FlClashService', name)
   abort "missing source: #{path}" unless File.exist?(path)
@@ -74,6 +82,8 @@ src_group = project.main_group.find_subpath('FlClashService', true)
 end
 
 # --- Link + embed FlClashCore.xcframework ---
+# The xcframework lives directly under ios/ (the project dir), so reference it
+# by SOURCE_ROOT rather than the FlClashService group path above.
 framework_ref = src_group.new_file('FlClashCore.xcframework')
 framework_ref.source_tree = 'SOURCE_ROOT'
 framework_ref.path = 'FlClashCore.xcframework'
