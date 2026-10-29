@@ -1,3 +1,4 @@
+import Dispatch
 import NetworkExtension
 import FlClashCore
 
@@ -19,10 +20,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        guard let homeDir = providerConfig["home-dir"] as? String
-            ?? FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: VpnCore.appGroup)?
-                .appendingPathComponent("Library/Application Support/flclash", isDirectory: true).path
-        else {
+        // An empty string is not a missing home dir: treat it as absent so the
+        // shared container fallback below still applies.
+        let configuredHomeDir = (providerConfig["home-dir"] as? String).flatMap {
+            $0.isEmpty ? nil : $0
+        }
+        guard let homeDir = configuredHomeDir ?? VpnCore.groupHomeDir else {
             completionHandler(NSError(domain: "FlClash", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "unable to resolve home dir"]))
             return
@@ -86,13 +89,24 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
-        // Forward JSON method calls from the containing app to the core.
-        guard let message = String(data: messageData, encoding: .utf8) else {
+        guard let message = String(data: messageData, encoding: .utf8),
+              let core = vpnCore else {
+            // No core yet (or not a string payload): report "no answer" rather
+            // than empty bytes, which the Dart side would try to parse as JSON.
             completionHandler?(nil)
             return
         }
-        let result = vpnCore?.invoke(message) ?? ""
-        completionHandler?(result.data(using: .utf8))
+        // The core answers on its own goroutine, so the reply is handed back
+        // through completionHandler. The watchdog keeps a lost answer from
+        // wedging the Dart future forever; ReplyOnce makes sure the handler
+        // still runs exactly once.
+        let reply = ReplyOnce(completionHandler)
+        core.invoke(message) { text in
+            reply.send(text.data(using: .utf8))
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+            reply.send(nil)
+        }
     }
 
     /// Turns "198.18.0.1/30" into ("198.18.0.1", "255.255.255.252").
@@ -109,5 +123,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             octets.append(String((value >> UInt32(shift)) & 0xFF))
         }
         return (String(parts[0]), octets.joined(separator: "."))
+    }
+}
+
+/// Delivers an extension reply exactly once. The core's answer may arrive after
+/// the watchdog has already fired, and calling a completion handler twice is a
+/// trap.
+private final class ReplyOnce {
+    private let lock = NSLock()
+    private var sent = false
+    private let handler: ((Data?) -> Void)?
+
+    init(_ handler: ((Data?) -> Void)?) {
+        self.handler = handler
+    }
+
+    func send(_ data: Data?) {
+        lock.lock()
+        if sent {
+            lock.unlock()
+            return
+        }
+        sent = true
+        lock.unlock()
+        handler?(data)
     }
 }

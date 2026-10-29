@@ -205,6 +205,44 @@ void main() {
       );
     });
 
+    test('retries a session that is not ready yet', () async {
+      var attempts = 0;
+      mockCoreChannel((_) async {
+        attempts++;
+        if (attempts == 1) {
+          throw PlatformException(code: 'not_ready');
+        }
+        return utf8.encode(
+          json.encode(
+            const CoreMethodResponse(id: '1', result: {'up': 2}).toJson(),
+          ),
+        );
+      });
+
+      final response = await IOSService().invokeMethod(
+        const CoreMethodCall(id: '1', method: CoreMethod.getTraffic),
+      );
+
+      expect(attempts, 2);
+      expect(response!.result, {'up': 2});
+    });
+
+    test('gives up after three refusals', () async {
+      var attempts = 0;
+      mockCoreChannel((_) async {
+        attempts++;
+        throw PlatformException(code: 'not_ready');
+      });
+
+      await expectLater(
+        IOSService().invokeMethod(
+          const CoreMethodCall(method: CoreMethod.getTraffic),
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+      expect(attempts, 3);
+    });
+
     test('surfaces a Core error inside the envelope', () async {
       mockCoreChannel(
         (_) async => utf8.encode(

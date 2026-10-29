@@ -121,11 +121,27 @@ class IOSService {
   /// Forwards a Core method call to the Go core inside the packet-tunnel
   /// extension. The AppDelegate relays this through `sendProviderMessage`,
   /// whose reply is delivered to the extension's handleAppMessage.
+  ///
+  /// `startVPNTunnel` only queues the request, and the app issues its first
+  /// core call right after it returns, so the session may still refuse provider
+  /// messages: a transport error is retried briefly instead of failing a call
+  /// that would succeed a moment later.
   Future<CoreMethodResponse?> invokeMethod(CoreMethodCall call) async {
-    final data = await coreChannel.invokeMethod<Uint8List>(
-      'invokeMethod',
-      json.encode(call),
-    );
+    Uint8List? data;
+    for (var attempt = 0; ; attempt++) {
+      try {
+        data = await coreChannel.invokeMethod<Uint8List>(
+          'invokeMethod',
+          json.encode(call),
+        );
+        break;
+      } on PlatformException {
+        if (attempt >= 2) {
+          rethrow;
+        }
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+    }
     if (data == null) {
       return null;
     }

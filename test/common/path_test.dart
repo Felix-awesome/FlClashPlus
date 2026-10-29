@@ -158,4 +158,69 @@ void main() {
 
     await expectLater(appPath.ensureProviderDirs(9), completes);
   });
+
+  group('support directory', () {
+    late Directory fallback;
+    late Directory group;
+
+    setUp(() {
+      fallback = Directory.systemTemp.createTempSync('path_fallback');
+      group = Directory.systemTemp.createTempSync('path_group');
+      // The resolver has to create it, so start from a path that does not exist.
+      group.deleteSync(recursive: true);
+    });
+
+    tearDown(() {
+      for (final directory in [fallback, group]) {
+        if (directory.existsSync()) {
+          directory.deleteSync(recursive: true);
+        }
+      }
+    });
+
+    test(
+      'off iOS the app container is used and the group is never asked',
+      () async {
+        var groupAsked = false;
+
+        final resolved = await AppPath.resolveSupportDirectory(
+          isIOS: false,
+          fallback: () async => fallback,
+          appGroupHomeDir: () async {
+            groupAsked = true;
+            return group.path;
+          },
+        );
+
+        expect(resolved.path, fallback.path);
+        expect(groupAsked, isFalse);
+      },
+    );
+
+    test('on iOS the App Group container wins and is created', () async {
+      final resolved = await AppPath.resolveSupportDirectory(
+        isIOS: true,
+        fallback: () async => fallback,
+        appGroupHomeDir: () async => group.path,
+      );
+
+      expect(resolved.path, group.path);
+      expect(group.existsSync(), isTrue);
+    });
+
+    test(
+      'a missing or empty group path falls back to the app container',
+      () async {
+        for (final groupPath in <String?>[null, '']) {
+          final resolved = await AppPath.resolveSupportDirectory(
+            isIOS: true,
+            fallback: () async => fallback,
+            appGroupHomeDir: () async => groupPath,
+          );
+
+          expect(resolved.path, fallback.path);
+        }
+      },
+    );
+  });
 }

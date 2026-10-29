@@ -2,9 +2,24 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
+
+/// The channel the iOS host app exposes its tunnel controls on. It also answers
+/// `getHomeDir` with the App Group container the extension can read.
+const _iosVpnChannelName = '$packageName/ios_vpn';
+
+Future<String?> _requestAppGroupHomeDirPath() async {
+  try {
+    return await const MethodChannel(_iosVpnChannelName)
+        .invokeMethod<String>('getHomeDir');
+  } catch (_) {
+    return null;
+  }
+}
 
 class AppPath {
   static AppPath? _instance;
@@ -15,7 +30,13 @@ class AppPath {
 
   @visibleForTesting
   static Future<Directory> Function() supportDirectory =
-      getApplicationSupportDirectory;
+      _defaultSupportDirectory;
+
+  /// The App Group container as reported by the iOS host app, or null when the
+  /// build has no App Group entitlement.
+  @visibleForTesting
+  static Future<String?> Function() appGroupHomeDirPath =
+      _requestAppGroupHomeDirPath;
 
   @visibleForTesting
   static Future<Directory> Function() temporaryDirectory =
@@ -50,6 +71,47 @@ class AppPath {
   factory AppPath() {
     _instance ??= AppPath._internal();
     return _instance!;
+  }
+
+  /// Resolves the directory the app keeps its data in.
+  ///
+  /// On iOS that has to be the App Group container: the core runs inside the
+  /// packet-tunnel extension, whose sandbox cannot read the app's own
+  /// container, so `config.yaml`, the profiles and the geo files are only
+  /// reachable from there. [fallback] still applies off iOS, and on a build
+  /// that dropped the App Group entitlement.
+  @visibleForTesting
+  static Future<Directory> resolveSupportDirectory({
+    required bool isIOS,
+    required Future<Directory> Function() fallback,
+    required Future<String?> Function() appGroupHomeDir,
+  }) async {
+    final directory = await fallback();
+    if (!isIOS) {
+      return directory;
+    }
+    final groupPath = await appGroupHomeDir();
+    if (groupPath == null || groupPath.isEmpty) {
+      commonPrint.log(
+        'App Group container unavailable, the VPN extension cannot read '
+        '${directory.path}',
+        logLevel: LogLevel.warning,
+      );
+      return directory;
+    }
+    final groupDirectory = Directory(groupPath);
+    if (!await groupDirectory.exists()) {
+      await groupDirectory.create(recursive: true);
+    }
+    return groupDirectory;
+  }
+
+  static Future<Directory> _defaultSupportDirectory() {
+    return resolveSupportDirectory(
+      isIOS: Platform.isIOS,
+      fallback: getApplicationSupportDirectory,
+      appGroupHomeDir: () => appGroupHomeDirPath(),
+    );
   }
 
   String get executableExtension {

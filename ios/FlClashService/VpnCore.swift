@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import NetworkExtension
 import FlClashCore
@@ -10,6 +11,22 @@ final class VpnCore {
 
     /// The App Group shared between the containing app and this extension.
     static let appGroup = "group.com.follow.clash"
+
+    /// The data directory both processes must agree on. The core runs inside
+    /// this extension's sandbox and cannot read the containing app's container,
+    /// so config.yaml, the profiles and the geo files all live in the App Group
+    /// container instead. `AppDelegate.groupHomeDir()` derives the same path on
+    /// the app side; keep the two in step.
+    static var groupHomeDir: String? {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroup
+        ) else {
+            return nil
+        }
+        return container
+            .appendingPathComponent("Library/Application Support/flclash", isDirectory: true)
+            .path
+    }
 
     private let homeDir: String
     private let stack: String
@@ -49,10 +66,29 @@ final class VpnCore {
             "skip-cert-verify": false,
         ])
 
-        // QuickSetup is fire-and-forget on iOS; completion is delivered through
-        // the ResultHandler callback.
+        // QuickSetup hands the work to its own goroutine, and `isRunning` is
+        // only set once the config has been applied. Starting the tun before
+        // that flips StartTun onto its "no core running yet" branch, which
+        // opens the listeners itself and collides with the setup path, so wait
+        // for the answer instead of racing it.
         let resultHandler = ResultCallback()
+        let ready = DispatchSemaphore(value: 0)
+        resultHandler.onAnswer = { _ in ready.signal() }
         MobileQuickSetup(initParams, setupParams, resultHandler)
+
+        guard ready.wait(timeout: .now() + 20) == .success else {
+            throw NSError(domain: "FlClash", code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "core setup timed out"])
+        }
+
+        let setupError = resultHandler.result
+        if !setupError.isEmpty {
+            // The core already fell back to its built-in config, which has no
+            // proxies. That is recoverable: the app pushes the real config over
+            // handleAppMessage once the tunnel is up, so leave a trace rather
+            // than refusing to start.
+            NSLog("[FlClash] core setup reported: %@", setupError)
+        }
 
         guard let fd = tunnelProvider.packetFlow.value(forKeyPath: "socket.fileDescriptor") as? Int32 else {
             throw NSError(domain: "FlClash", code: 2,
@@ -80,11 +116,15 @@ final class VpnCore {
         }
     }
 
-    /// Forwards a JSON method call to the core and returns the JSON result.
-    func invoke(_ json: String) -> String {
+    /// Forwards a JSON method call to the core. The core dispatches every
+    /// method on its own goroutine (`core.dispatchMethodCall` runs the handler
+    /// under `safeGo`), so `MobileInvokeMethod` returns before there is an
+    /// answer: the reply has to be delivered through the completion handler
+    /// instead of read back from the call.
+    func invoke(_ json: String, completion: @escaping (String) -> Void) {
         let callback = ResultCallback()
+        callback.onAnswer = { text in completion(text) }
         MobileInvokeMethod(json, callback)
-        return callback.result
     }
 
     private static func jsonString(_ object: [String: Any]) -> String {
@@ -106,6 +146,10 @@ private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
     private let lock = NSLock()
     private var buffer = ""
 
+    /// Called once, with whatever the core answered, on the goroutine the core
+    /// replied from.
+    var onAnswer: ((String) -> Void)?
+
     var result: String {
         lock.lock()
         defer { lock.unlock() }
@@ -117,6 +161,9 @@ private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
         if let data = data {
             buffer = String(data: data, encoding: .utf8) ?? ""
         }
+        let text = buffer
+        let answer = onAnswer
         lock.unlock()
+        answer?(text)
     }
 }

@@ -7,6 +7,25 @@ import NetworkExtension
     private static let vpnChannel = "com.follow.clash/ios_vpn"
     private static let coreChannel = "com.follow.clash/core"
 
+    /// The App Group the app shares with the packet-tunnel extension. The core
+    /// runs inside the extension's sandbox, so the data directory has to be
+    /// inside this container for both processes to reach the same files.
+    private static let appGroupId = "group.com.follow.clash"
+
+    /// The data directory the core works in, mirrored by `VpnCore.groupHomeDir`
+    /// on the extension side. Keep the two in step: if they disagree the core
+    /// reads a directory the app never wrote to.
+    static func groupHomeDir() -> String? {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupId
+        ) else {
+            return nil
+        }
+        return container
+            .appendingPathComponent("Library/Application Support/flclash", isDirectory: true)
+            .path
+    }
+
     override func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -63,6 +82,10 @@ import NetworkExtension
             result(nil)
         case "requestPermission":
             requestPermission(result)
+        case "getHomeDir":
+            // The Dart side asks for this instead of path_provider's app
+            // container, which the extension cannot read.
+            result(Self.groupHomeDir())
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -103,11 +126,16 @@ import NetworkExtension
 
             // Pass the Go core config through to the extension.
             var providerConfig: [String: Any] = [
-                "home-dir": args["homeDir"] as? String ?? "",
                 "stack": args["stack"] as? String ?? "gvisor",
                 "address": args["address"] as? String ?? "198.18.0.1/30",
                 "dns": args["dns"] as? String ?? "198.18.0.1",
             ]
+            // Leave the key out when the caller has no home dir: the extension
+            // treats a missing key as "use the App Group container", but an
+            // empty string would be taken literally as its data path.
+            if let homeDir = args["homeDir"] as? String, !homeDir.isEmpty {
+                providerConfig["home-dir"] = homeDir
+            }
             if let options = args["options"] as? [String: Any] {
                 for (k, v) in options { providerConfig[k] = v }
             }
