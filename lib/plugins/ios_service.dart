@@ -35,6 +35,18 @@ Future<Map<String, Object?>> _decodeResponse(
 const _channelRetryAttempts = 5;
 const _channelRetryDelay = Duration(milliseconds: 100);
 
+/// A core call the extension relays answers with nothing when its own core has
+/// not finished starting, which the app would surface as "Core did not
+/// answer <method>". The extension already waits for setup before replying, so
+/// an empty answer usually means the tunnel was still coming up: one more
+/// attempt covers that without tripling the worst-case latency.
+const _emptyReplyAttempts = 2;
+const _emptyReplyDelay = Duration(milliseconds: 300);
+
+/// How many times a transport error from `sendProviderMessage` is retried.
+const _sendRetryAttempts = 3;
+const _sendRetryDelay = Duration(milliseconds: 200);
+
 /// Retries a channel call that reports [MissingPluginException], which is what
 /// a platform answers while its handler has not been installed yet. The result
 /// stays nullable because `invokeMethod<T>` itself returns `T?`.
@@ -52,9 +64,9 @@ Future<T?> _invokeWithRetry<T>(Future<T?> Function() invoke) async {
 }
 
 /// The iOS counterpart of the Android [Service]: it drives the
-/// NetworkExtension tunnel via NEVPNManager (through the AppDelegate method
-/// channel) and forwards Core method calls to the Go core running inside the
-/// packet-tunnel extension via `sendProviderMessage` (handleAppMessage).
+/// NetworkExtension tunnel via NETunnelProviderManager (through the AppDelegate
+/// method channel) and forwards Core method calls to the Go core running inside
+/// the packet-tunnel extension via `sendProviderMessage` (handleAppMessage).
 class IOSService {
   static IOSService? _instance;
 
@@ -163,7 +175,8 @@ class IOSService {
   /// `startVPNTunnel` only queues the request, and the app issues its first
   /// core call right after it returns, so the session may still refuse provider
   /// messages: a transport error is retried briefly instead of failing a call
-  /// that would succeed a moment later.
+  /// that would succeed a moment later. An empty reply is retried once for the
+  /// same reason -- the extension answers nothing while its core is starting.
   Future<CoreMethodResponse?> invokeMethod(CoreMethodCall call) async {
     Uint8List? data;
     for (var attempt = 0; ; attempt++) {
@@ -172,18 +185,23 @@ class IOSService {
           'invokeMethod',
           json.encode(call),
         );
-        break;
       } on PlatformException {
-        if (attempt >= 2) {
+        if (attempt >= _sendRetryAttempts - 1) {
           rethrow;
         }
-        await Future.delayed(const Duration(milliseconds: 200));
+        await Future<void>.delayed(_sendRetryDelay);
+        continue;
       } on MissingPluginException {
         if (attempt >= _channelRetryAttempts - 1) {
           rethrow;
         }
-        await Future.delayed(_channelRetryDelay);
+        await Future<void>.delayed(_channelRetryDelay);
+        continue;
       }
+      if (data != null || attempt >= _emptyReplyAttempts - 1) {
+        break;
+      }
+      await Future<void>.delayed(_emptyReplyDelay);
     }
     if (data == null) {
       return null;

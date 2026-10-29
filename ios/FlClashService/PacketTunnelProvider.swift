@@ -89,24 +89,74 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
-        guard let message = String(data: messageData, encoding: .utf8),
-              let core = vpnCore else {
-            // No core yet (or not a string payload): report "no answer" rather
-            // than empty bytes, which the Dart side would try to parse as JSON.
+        guard let message = String(data: messageData, encoding: .utf8) else {
             completionHandler?(nil)
             return
         }
-        // The core answers on its own goroutine, so the reply is handed back
-        // through completionHandler. The watchdog keeps a lost answer from
-        // wedging the Dart future forever; ReplyOnce makes sure the handler
-        // still runs exactly once.
-        let reply = ReplyOnce(completionHandler)
-        core.invoke(message) { text in
-            reply.send(text.data(using: .utf8))
+        // The app calls in as soon as the tunnel reports itself up, but the core
+        // is only built after setTunnelNetworkSettings completes and QuickSetup
+        // returns. Reply immediately and the very first call (typically
+        // validateConfig while adding a profile) lands while vpnCore is still
+        // nil, which the app shows as "Core did not answer validateConfig".
+        // Waiting here turns that race into a slow call instead of a failed one.
+        waitForCore(timeout: 20) { core in
+            guard let core = core else {
+                NSLog("[FlClash] core is still not ready, dropping %@", message)
+                completionHandler?(nil)
+                return
+            }
+            // The core answers on its own goroutine, so the reply is handed back
+            // through completionHandler. The watchdog keeps a lost answer from
+            // wedging the Dart future forever; ReplyOnce makes sure the handler
+            // still runs exactly once.
+            let reply = ReplyOnce(completionHandler)
+            core.invoke(message) { text in
+                reply.send(text.data(using: .utf8))
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+                reply.send(nil)
+            }
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
-            reply.send(nil)
+    }
+
+    /// Calls back with the core once it is set up and live, or with nil when it
+    /// never got there within [timeout]. The completion runs exactly once.
+    private func waitForCore(
+        timeout: TimeInterval,
+        completion: @escaping (VpnCore?) -> Void
+    ) {
+        // `vpnCore` is assigned before its start() finishes, so existence alone
+        // is not readiness: a call answered mid-setup would reach a core whose
+        // config is not applied yet.
+        func readyCore() -> VpnCore? {
+            guard let core = self.vpnCore, core.isReady else {
+                return nil
+            }
+            return core
         }
+        if let core = readyCore() {
+            completion(core)
+            return
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        let poll: () -> Void = { [weak self] in
+            guard let self = self else {
+                completion(nil)
+                return
+            }
+            if let core = readyCore() {
+                completion(core)
+                return
+            }
+            if Date() >= deadline {
+                completion(nil)
+                return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+                poll()
+            }
+        }
+        poll()
     }
 
     /// Turns "198.18.0.1/30" into ("198.18.0.1", "255.255.255.252").

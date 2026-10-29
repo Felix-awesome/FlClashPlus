@@ -35,6 +35,11 @@ final class VpnCore {
     private let mtu: Int
     private var started = false
 
+    /// True once the core finished setup and the tun is live. Assigned before
+    /// `MobileStartTun` so a call that arrives mid-setup is not answered by a
+    /// half-initialized core.
+    private(set) var isReady = false
+
     init(homeDir: String,
          stack: String = "gvisor",
          address: String = "198.18.0.1/30",
@@ -107,9 +112,11 @@ final class VpnCore {
         }
 
         started = true
+        isReady = true
     }
 
     func stop() {
+        isReady = false
         if started {
             MobileStopTun()
             started = false
