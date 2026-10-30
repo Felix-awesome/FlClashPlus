@@ -40,6 +40,12 @@ final class VpnCore {
     /// half-initialized core.
     private(set) var isReady = false
 
+    /// Why the core is not ready yet, in words the app can show. Empty once
+    /// setup went through cleanly. Without this the provider can only answer a
+    /// call with nothing, which the app surfaces as "Core did not answer
+    /// setupConfig" -- true, but useless for fixing anything.
+    private(set) var lastError = ""
+
     init(homeDir: String,
          stack: String = "gvisor",
          address: String = "198.18.0.1/30",
@@ -81,23 +87,32 @@ final class VpnCore {
         resultHandler.onAnswer = { _ in ready.signal() }
         MobileQuickSetup(initParams, setupParams, resultHandler)
 
-        guard ready.wait(timeout: .now() + 20) == .success else {
-            throw NSError(domain: "FlClash", code: 5,
-                userInfo: [NSLocalizedDescriptionKey: "core setup timed out"])
-        }
-
+        // A first init loads the geo databases and compiles the whole rule set,
+        // which on an older device easily runs past 20s. Aborting on that
+        // timeout used to kill startTunnel outright, so the tunnel never came
+        // up and every later core call had nobody left to answer it -- which
+        // the app reports as "Core did not answer setupConfig". Wait longer,
+        // and carry on even when the answer never arrives: the tunnel is what
+        // the app talks through, and setupConfig re-applies the real config
+        // once it is up.
+        let answered = ready.wait(timeout: .now() + 45) == .success
         let setupError = resultHandler.result
-        if !setupError.isEmpty {
+        if !answered {
+            lastError = "core setup did not finish within 45s"
+            NSLog("[FlClash] %@", lastError)
+        } else if !setupError.isEmpty {
             // The core already fell back to its built-in config, which has no
             // proxies. That is recoverable: the app pushes the real config over
             // handleAppMessage once the tunnel is up, so leave a trace rather
             // than refusing to start.
-            NSLog("[FlClash] core setup reported: %@", setupError)
+            lastError = "core setup reported: " + setupError
+            NSLog("[FlClash] %@", lastError)
         }
 
         guard let fd = tunnelProvider.packetFlow.value(forKeyPath: "socket.fileDescriptor") as? Int32 else {
+            lastError = "unable to obtain packet flow file descriptor"
             throw NSError(domain: "FlClash", code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "unable to obtain packet flow file descriptor"])
+                userInfo: [NSLocalizedDescriptionKey: lastError])
         }
 
         let options = VpnCore.jsonString([
@@ -107,8 +122,11 @@ final class VpnCore {
 
         let ok = MobileStartTun(fd, stack, address, dns, options)
         if !ok {
+            lastError = lastError.isEmpty
+                ? "MobileStartTun failed"
+                : lastError + "; MobileStartTun failed"
             throw NSError(domain: "FlClash", code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "MobileStartTun failed"])
+                userInfo: [NSLocalizedDescriptionKey: lastError])
         }
 
         started = true
@@ -117,6 +135,7 @@ final class VpnCore {
 
     func stop() {
         isReady = false
+        lastError = ""
         if started {
             MobileStopTun()
             started = false

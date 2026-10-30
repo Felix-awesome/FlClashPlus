@@ -1,4 +1,5 @@
 import Dispatch
+import Foundation
 import NetworkExtension
 import FlClashCore
 
@@ -10,13 +11,32 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private var vpnCore: VpnCore?
 
+    /// Why the last startTunnel attempt failed, if it did. Kept so a core call
+    /// that arrives afterwards can be answered with the real reason instead of
+    /// an empty reply -- on a device there is no console to read it from.
+    private var lastStartError = ""
+
+    /// Fails startTunnel with a message that survives the failure.
+    private func fail(
+        _ code: Int,
+        _ message: String,
+        completion: @escaping (Error?) -> Void
+    ) {
+        lastStartError = message
+        NSLog("[FlClash] startTunnel failed: %@", message)
+        completion(NSError(
+            domain: "FlClash",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        ))
+    }
+
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         // The tunnel configuration (home dir, stack, address, dns) is delivered
         // from the containing app through the protocolConfiguration.
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
               let providerConfig = proto.providerConfiguration else {
-            completionHandler(NSError(domain: "FlClash", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "missing providerConfiguration"]))
+            fail(1, "missing providerConfiguration", completion: completionHandler)
             return
         }
 
@@ -26,8 +46,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             $0.isEmpty ? nil : $0
         }
         guard let homeDir = configuredHomeDir ?? VpnCore.groupHomeDir else {
-            completionHandler(NSError(domain: "FlClash", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "unable to resolve home dir"]))
+            fail(1, "unable to resolve home dir: no provider config and the "
+                + "group.com.follow.clash container is unavailable",
+                completion: completionHandler)
             return
         }
 
@@ -37,8 +58,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let mtu = (providerConfig["mtu"] as? NSNumber)?.intValue ?? 9000
 
         guard let parsed = Self.splitCIDR(address) else {
-            completionHandler(NSError(domain: "FlClash", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "invalid tunnel address: " + address]))
+            fail(1, "invalid tunnel address: " + address,
+                completion: completionHandler)
             return
         }
 
@@ -65,8 +86,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self = self else { return }
             if let error = error {
-                completionHandler(NSError(domain: "FlClash", code: 4,
-                    userInfo: [NSLocalizedDescriptionKey: "setTunnelNetworkSettings failed: " + error.localizedDescription]))
+                self.fail(4, "setTunnelNetworkSettings failed: "
+                    + error.localizedDescription, completion: completionHandler)
                 return
             }
 
@@ -77,7 +98,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 try core.start(packetFlow: self.packetFlow, tunnelProvider: self)
                 completionHandler(nil)
             } catch {
-                completionHandler(error)
+                self.fail(5, error.localizedDescription, completion: completionHandler)
             }
         }
     }
@@ -99,10 +120,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // validateConfig while adding a profile) lands while vpnCore is still
         // nil, which the app shows as "Core did not answer validateConfig".
         // Waiting here turns that race into a slow call instead of a failed one.
-        waitForCore(timeout: 20) { core in
+        //
+        // The wait is generous because a first init compiles the whole rule set;
+        // when it still runs out, the reply carries the reason instead of being
+        // empty, so the app can say why rather than "did not answer".
+        let startError = lastStartError
+        waitForCore(timeout: 45) { [weak self] core in
             guard let core = core else {
-                NSLog("[FlClash] core is still not ready, dropping %@", message)
-                completionHandler?(nil)
+                let setupError = self?.vpnCore?.lastError ?? ""
+                let reason = startError.isEmpty ? setupError : startError
+                NSLog("[FlClash] core is not ready: %@", reason)
+                completionHandler?(Self.notReadyReply(request: message, reason: reason))
                 return
             }
             // The core answers on its own goroutine, so the reply is handed back
@@ -113,8 +141,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             core.invoke(message) { text in
                 reply.send(text.data(using: .utf8))
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
-                reply.send(nil)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+                reply.send(Self.notReadyReply(
+                    request: message,
+                    reason: "核心 60 秒内没有返回结果"))
             }
         }
     }
@@ -157,6 +187,30 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             self.pollCore(deadline: deadline, completion: completion)
         }
+    }
+
+    /// Builds a reply the app decodes as a core error.
+    ///
+    /// The Dart side reads every answer as a `MethodResponse`, so an `error`
+    /// object is what turns "nothing came back" into a message the UI prints.
+    /// The id is echoed from the request because the two are paired on it.
+    private static func notReadyReply(request: String, reason: String) -> Data? {
+        var id: Any = ""
+        if let data = request.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let value = object["id"] {
+            id = value
+        }
+        let detail = reason.isEmpty ? "扩展还没有完成核心初始化" : reason
+        let payload: [String: Any] = [
+            "id": id,
+            "error": [
+                "code": "core_not_ready",
+                "message": "VPN 扩展里的核心还没就绪：" + detail
+                    + "。隧道已建立，稍等几秒再重试一次。",
+            ],
+        ]
+        return try? JSONSerialization.data(withJSONObject: payload)
     }
 
     /// Turns "198.18.0.1/30" into ("198.18.0.1", "255.255.255.252").
