@@ -74,7 +74,7 @@ run() {
 sed -i.bak 's/^\([[:space:]]*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
 rm -f pubspec.yaml.bak
 
-echo "=== [1/6] Ensure Flutter iOS project skeleton ==="
+echo "=== [1/7] Ensure Flutter iOS project skeleton ==="
 BACKUP_DIR="$(mktemp -d)"
 cp -r "$IOS_DIR" "$BACKUP_DIR/ios.bak" 2>/dev/null || true
 
@@ -94,26 +94,52 @@ do
   fi
 done
 
-echo "=== [2/6] flutter pub get (generate SPM integration) ==="
+echo "=== [2/7] flutter pub get (generate SPM integration) ==="
 run "flutter pub get" $FLUTTER_CMD pub get
 
-echo "=== [3/6] Add FlClashService extension target to Xcode project ==="
+echo "=== [3/7] Add FlClashService extension target to Xcode project ==="
 run "add_ios_extension" ruby "$ROOT_DIR/tool/add_ios_extension.rb" \
   "$IOS_DIR/Runner.xcodeproj" "$BUNDLE_ID" "$APP_GROUP" "$XCFRAMEWORK"
 
-echo "=== [4/6] flutter pub get (restore SPM integration) ==="
+echo "=== [4/7] flutter pub get (restore SPM integration) ==="
 run "flutter pub get" $FLUTTER_CMD pub get
 
-echo "=== [5/6] flutter build ios (unsigned, verbose) ==="
+echo "=== [5/7] flutter build ios (unsigned, verbose) ==="
 cd "$ROOT_DIR"
 # -v prints the full xcodebuild invocation and its output, which is the only
 # way to see why the build dies before emitting any Swift compile errors.
 run "flutter build ios" $FLUTTER_CMD build ios --release --no-codesign -v
 
-echo "=== [6/6] Package unsigned IPA ==="
+echo "=== [6/7] Package unsigned IPA ==="
 cd "$ROOT_DIR/build/ios/iphoneos"
 mkdir -p Payload
 cp -r Runner.app Payload/
 zip -qry "$ROOT_DIR/dist/FlClash-unsigned.ipa" Payload
+
+echo "=== [7/7] Package TrollStore IPA (ad-hoc signed, entitlements kept) ==="
+# TrollStore does not check a certificate chain, so a bundle installed that way
+# can keep entitlements no provisioning profile would ever grant -- Network
+# Extension and the App Group included. That makes it the only route to a
+# working tunnel without a paid developer account. `ldid -S` writes an ad-hoc
+# signature carrying the given entitlements, and TrollStore preserves them when
+# it re-signs during install. Skipped rather than failed when ldid is missing:
+# the unsigned IPA above stays the primary artifact.
+if command -v ldid >/dev/null 2>&1; then
+  rm -rf PayloadTroll
+  mkdir -p PayloadTroll/Payload
+  cp -r Runner.app PayloadTroll/Payload/
+  ldid -S"$ROOT_DIR/ios/Runner/Runner.entitlements" \
+    PayloadTroll/Payload/Runner.app/Runner
+  ldid -S"$ROOT_DIR/ios/FlClashService/FlClashService.entitlements" \
+    PayloadTroll/Payload/Runner.app/PlugIns/FlClashService.appex/FlClashService
+  rm -f "$ROOT_DIR/dist/FlClash-trollstore.ipa"
+  if ( cd PayloadTroll && zip -qry "$ROOT_DIR/dist/FlClash-trollstore.ipa" Payload ); then
+    echo "Built: $ROOT_DIR/dist/FlClash-trollstore.ipa"
+  else
+    echo "::warning::TrollStore packaging failed, the unsigned IPA is unaffected"
+  fi
+else
+  echo "ldid not found, skipping the TrollStore package"
+fi
 
 echo "Built: $ROOT_DIR/dist/FlClash-unsigned.ipa"

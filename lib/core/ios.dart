@@ -58,8 +58,15 @@ class CoreIOS extends CoreHandlerInterface {
     }
     // Save the tunnel config (home dir etc.) then start the tunnel. The
     // extension boots the core and opens its listener as part of startTunnel.
+    // A failed save has to abort here: starting the tunnel without its provider
+    // configuration leaves the extension with no home dir to read, and the
+    // user would instead get a core-call timeout that says nothing about the
+    // real cause.
     final homeDir = await appPath.homeDirPath;
-    await _service?.saveConfig(homeDir: homeDir);
+    final saved = await _service?.saveConfig(homeDir: homeDir) ?? false;
+    if (!saved) {
+      throw StateError('iOS VPN configuration was not saved');
+    }
     final started = await _service?.start() ?? false;
     if (!started) {
       throw StateError('iOS VPN tunnel failed to start');

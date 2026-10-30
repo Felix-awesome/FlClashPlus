@@ -54,6 +54,17 @@ void main() {
       expect(core.start(), throwsStateError);
     });
 
+    // A failed save means the extension has no home dir to read, so opening the
+    // tunnel anyway only buys a core-call timeout that hides the real cause.
+    test('start skips the tunnel when the config was not saved', () async {
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => false);
+
+      await expectLater(core.start(), throwsStateError);
+      verifyNever(() => service.start());
+    });
+
     test('stop shuts the tunnel down', () async {
       when(
         () => service.saveConfig(homeDir: any(named: 'homeDir')),

@@ -63,6 +63,48 @@ Future<T?> _invokeWithRetry<T>(Future<T?> Function() invoke) async {
   }
 }
 
+/// The code the AppDelegate uses when iOS refused the tunnel configuration
+/// because the running build has no Network Extension entitlement.
+const _neEntitlementCode = 'ne_entitlement_missing';
+
+/// Shown instead of the raw POSIX string. A sideloaded build cannot fix this
+/// from inside the app, so the message has to name the cause and the way out.
+const _neEntitlementMessage =
+    'iOS 拒绝创建 VPN 配置：当前安装包的签名里没有 Network Extension 权限。'
+    '免费 Apple ID 和通配符企业证书签出来的包都不带这项能力，'
+    '需要含 Network Extensions 能力的 App ID 描述文件，或改用 TrollStore 安装。';
+
+/// iOS answers a missing Network Extension entitlement with a bare
+/// "permission denied" on the first tunnel-configuration call. Surfacing that
+/// verbatim sends people looking for a configuration bug that does not exist,
+/// so it is rewritten into the actual cause. The AppDelegate already classifies
+/// the failure; the string checks cover older builds that do not.
+PlatformException _translateVpnError(PlatformException error) {
+  final message = error.message?.toLowerCase() ?? '';
+  final looksLikeEntitlement =
+      error.code == _neEntitlementCode ||
+      message.contains('permission denied') ||
+      message.contains('operation not permitted');
+  if (!looksLikeEntitlement) {
+    return error;
+  }
+  return PlatformException(
+    code: _neEntitlementCode,
+    message: _neEntitlementMessage,
+    details: error.details,
+  );
+}
+
+/// Runs one channel call with the launch-time retry applied and the reported
+/// failure translated before it reaches the UI.
+Future<T?> _call<T>(Future<T?> Function() invoke) async {
+  try {
+    return await _invokeWithRetry(invoke);
+  } on PlatformException catch (error) {
+    throw _translateVpnError(error);
+  }
+}
+
 /// The iOS counterpart of the Android [Service]: it drives the
 /// NetworkExtension tunnel via NETunnelProviderManager (through the AppDelegate
 /// method channel) and forwards Core method calls to the Go core running inside
@@ -89,7 +131,7 @@ class IOSService {
   /// Whether the VPN tunnel is currently connected or connecting.
   Future<bool> getStatus() async {
     try {
-      final status = await _invokeWithRetry(
+      final status = await _call(
         () => vpnChannel.invokeMapMethod<String, Object?>('getStatus'),
       );
       return status?['running'] as bool? ?? false;
@@ -106,40 +148,36 @@ class IOSService {
     String dns = '198.18.0.1',
     Map<String, Object?> options = const {},
   }) async {
-    return await _invokeWithRetry(
-          () => vpnChannel.invokeMethod<bool>('saveConfig', {
-            'homeDir': homeDir,
-            'stack': stack,
-            'address': address,
-            'dns': dns,
-            'options': options,
-          }),
-        ) ??
-        false;
+    final saved = await _call(
+      () => vpnChannel.invokeMethod<bool>('saveConfig', {
+        'homeDir': homeDir,
+        'stack': stack,
+        'address': address,
+        'dns': dns,
+        'options': options,
+      }),
+    );
+    return saved ?? false;
   }
 
   /// Requests the system VPN permission (triggers the NEVPNManager dialog).
   Future<bool> requestPermission() async {
-    return await _invokeWithRetry(
-          () => vpnChannel.invokeMethod<bool>('requestPermission'),
-        ) ??
-        false;
+    final granted = await _call(
+      () => vpnChannel.invokeMethod<bool>('requestPermission'),
+    );
+    return granted ?? false;
   }
 
   /// Starts the VPN tunnel.
   Future<bool> start() async {
-    return await _invokeWithRetry(
-          () => vpnChannel.invokeMethod<bool>('start'),
-        ) ??
-        false;
+    final started = await _call(() => vpnChannel.invokeMethod<bool>('start'));
+    return started ?? false;
   }
 
   /// Stops the VPN tunnel.
   Future<bool> stop() async {
-    return await _invokeWithRetry(
-          () => vpnChannel.invokeMethod<bool>('stop'),
-        ) ??
-        false;
+    final stopped = await _call(() => vpnChannel.invokeMethod<bool>('stop'));
+    return stopped ?? false;
   }
 
   /// Initializes the iOS service. The core lives in the extension process, so
@@ -157,12 +195,8 @@ class IOSService {
   }
 
   Future<DateTime?> getRunTime() async {
-    final ms =
-        await _invokeWithRetry(
-          () => vpnChannel.invokeMethod<int>('getRunTime'),
-        ) ??
-        0;
-    if (ms == 0) {
+    final ms = await _call(() => vpnChannel.invokeMethod<int>('getRunTime'));
+    if (ms == null || ms == 0) {
       return null;
     }
     return DateTime.fromMillisecondsSinceEpoch(ms);

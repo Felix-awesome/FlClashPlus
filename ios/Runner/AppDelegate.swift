@@ -37,6 +37,49 @@ import NetworkExtension
     /// so a stale object can never drive a stale tunnel.
     private var cachedManager: NETunnelProviderManager?
 
+    // MARK: - Failure classification
+
+    /// Turns a NetworkExtension failure into something the user can act on.
+    ///
+    /// `loadAllFromPreferences` answers "permission denied" when the running
+    /// binary was not signed with `com.apple.developer.networking.networkextension`.
+    /// That is exactly what a sideloaded build gets: a Personal Team (free
+    /// Apple ID) profile and a wildcard enterprise profile both lack the
+    /// Network Extension capability, and every resigning tool silently drops
+    /// whatever its profile cannot grant. The app never sees the system
+    /// "add VPN configuration" prompt in that case, so reporting a bare
+    /// POSIX string sends people hunting for a configuration bug that is not
+    /// there. Anything else is a real configuration error and is passed
+    /// through with its domain/code attached.
+    static func describe(_ error: Error) -> FlutterError {
+        let nsError = error as NSError
+        let text = nsError.localizedDescription.lowercased()
+        let missingEntitlement =
+            text.contains("permission denied")
+            || text.contains("operation not permitted")
+            || text.contains("entitlement")
+        let details: [String: Any] = [
+            "domain": nsError.domain,
+            "code": nsError.code,
+            "original": nsError.localizedDescription,
+            "appGroupAvailable": groupHomeDir() != nil,
+        ]
+        if missingEntitlement {
+            return FlutterError(
+                code: "ne_entitlement_missing",
+                message: "iOS 拒绝创建 VPN 配置：当前安装包的签名里没有 Network Extension 权限。"
+                    + "免费 Apple ID 和通配符企业证书签出来的包都不带这项能力，"
+                    + "需要含 Network Extensions 能力的 App ID 描述文件，或改用 TrollStore 安装。",
+                details: details
+            )
+        }
+        return FlutterError(
+            code: "load_failed",
+            message: nsError.localizedDescription,
+            details: details
+        )
+    }
+
     override func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -132,6 +175,14 @@ import NetworkExtension
             // The Dart side asks for this instead of path_provider's app
             // container, which the extension cannot read.
             result(Self.groupHomeDir())
+        case "getDiagnostics":
+            // Signing-related facts a sideloaded build can get wrong, in one
+            // reply, so a failure can be explained instead of guessed at.
+            result([
+                "appGroupAvailable": Self.groupHomeDir() != nil,
+                "appGroupPath": Self.groupHomeDir() ?? "",
+                "providerBundleIdentifier": Self.providerBundleIdentifier,
+            ])
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -196,7 +247,7 @@ import NetworkExtension
     private func saveConfig(_ args: [String: Any], result: @escaping FlutterResult) {
         loadTunnelManager(createIfMissing: true) { manager, error in
             if let error = error {
-                result(FlutterError(code: "load_failed", message: error.localizedDescription, details: nil))
+                result(Self.describe(error))
                 return
             }
             guard let manager = manager else {
@@ -265,7 +316,7 @@ import NetworkExtension
     private func start(_ result: @escaping FlutterResult) {
         loadTunnelManager(createIfMissing: false) { manager, error in
             if let error = error {
-                result(FlutterError(code: "load_failed", message: error.localizedDescription, details: nil))
+                result(Self.describe(error))
                 return
             }
             guard let manager = manager else {
@@ -278,7 +329,7 @@ import NetworkExtension
             }
             manager.loadFromPreferences { reloadError in
                 if let reloadError = reloadError {
-                    result(FlutterError(code: "load_failed", message: reloadError.localizedDescription, details: nil))
+                    result(Self.describe(reloadError))
                     return
                 }
                 do {
@@ -312,7 +363,7 @@ import NetworkExtension
     private func requestPermission(_ result: @escaping FlutterResult) {
         loadTunnelManager(createIfMissing: true) { manager, error in
             if let error = error {
-                result(FlutterError(code: "load_failed", message: error.localizedDescription, details: nil))
+                result(Self.describe(error))
                 return
             }
             guard let manager = manager else {
@@ -369,8 +420,7 @@ extension AppDelegate {
         // fall back to the saved configuration before giving up.
         loadTunnelManager(createIfMissing: false) { manager, error in
             if let error = error {
-                result(FlutterError(code: "load_failed",
-                    message: error.localizedDescription, details: nil))
+                result(Self.describe(error))
                 return
             }
             guard let manager = manager,

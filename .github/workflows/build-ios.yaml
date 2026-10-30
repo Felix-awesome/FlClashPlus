@@ -60,6 +60,13 @@ jobs:
       - name: Build Go core xcframework
         run: bash tool/build_ios_core.sh ios/FlClashCore.xcframework
 
+      # ldid lets the packaging step emit a TrollStore-ready IPA: it writes an
+      # ad-hoc signature that carries the Network Extension entitlement, which
+      # no free Apple ID profile can grant. Optional by design -- a missing ldid
+      # only skips that extra artifact.
+      - name: Setup ldid (TrollStore packaging)
+        run: brew install ldid || echo "::warning::ldid unavailable, TrollStore IPA will be skipped"
+
       - name: Build iOS app (unsigned)
         run: bash tool/build_ios_app.sh ${{ env.BUNDLE_ID }} ${{ env.APP_GROUP }}
 
@@ -68,6 +75,16 @@ jobs:
         with:
           name: FlClash-unsigned-ipa
           path: dist/FlClash-unsigned.ipa
+
+      # Ad-hoc signed with the Network Extension + App Group entitlements kept,
+      # for devices that install through TrollStore instead of a certificate.
+      - name: Upload TrollStore IPA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlClash-trollstore-ipa
+          path: dist/FlClash-trollstore.ipa
+          if-no-files-found: ignore
 
       # Cheap verification: publish the processed Info.plists so the appex
       # bundle id / version / executable keys can be checked without pulling
