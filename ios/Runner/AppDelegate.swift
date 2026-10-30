@@ -201,6 +201,7 @@ import NetworkExtension
                 "appGroupAvailable": Self.groupHomeDir() != nil,
                 "appGroupPath": Self.groupHomeDir() ?? "",
                 "providerBundleIdentifier": Self.providerBundleIdentifier,
+                "extensionEmbedded": Self.extensionEmbedded,
             ])
         default:
             result(FlutterMethodNotImplemented)
@@ -332,7 +333,7 @@ import NetworkExtension
 
     // MARK: - Start / Stop
 
-    private func start(_ result: @escaping FlutterResult) {
+    private func start(_ result: @escaping FlutterResult, attempt: Int = 0) {
         loadTunnelManager(createIfMissing: false) { manager, error in
             if let error = error {
                 result(Self.describe(error))
@@ -360,6 +361,16 @@ import NetworkExtension
                     self.cachedManager = manager
                     result(true)
                     return
+                case .disconnecting where attempt < 40:
+                    // Writing a new protocol configuration (saveConfig runs
+                    // right before this) tears the running tunnel down, so a
+                    // restart lands here mid-teardown. startVPNTunnel refuses
+                    // while that is in flight; wait it out instead of reporting
+                    // a failure for a tunnel that is merely going away.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        self.start(result, attempt: attempt + 1)
+                    }
+                    return
                 default:
                     break
                 }
@@ -369,13 +380,58 @@ import NetworkExtension
                     self.runTime = Date()
                     self.waitForConnection(
                         manager.connection,
-                        attempt: 0,
+                        watch: ConnectionWatch(startedAt: Date()),
                         result: result
                     )
                 } catch {
-                    result(FlutterError(code: "start_failed", message: error.localizedDescription, details: nil))
+                    let context = Self.contextNote()
+                    result(FlutterError(
+                        code: "start_failed",
+                        message: (["无法启动 VPN 隧道：" + error.localizedDescription] + context)
+                            .joined(separator: "\n"),
+                        details: [
+                            "appGroupAvailable": Self.groupHomeDir() != nil,
+                            "extensionEmbedded": Self.extensionEmbedded,
+                        ]
+                    ))
                 }
             }
+        }
+    }
+
+    /// How long the tunnel may sit in "connecting" before this watch stops
+    /// waiting and reports success. Booting the core is the extension's job and
+    /// takes as long as it takes; the status turning "connected" only means the
+    /// system accepted the tunnel.
+    private static let connectBudget: TimeInterval = 45
+
+    /// How long the status may stay "disconnected" *after* it was seen going up.
+    /// A tunnel that was connecting and then dropped has failed inside the
+    /// provider; one that has not moved at all is still being launched.
+    private static let afterActivityGrace: TimeInterval = 6
+
+    /// How long the status may stay "disconnected" without ever going up. The
+    /// provider process launches in well under a second, so this only expires
+    /// when the system never ran it at all.
+    private static let launchGrace: TimeInterval = 15
+
+    /// Progress of one start request, carried across the status polls.
+    private struct ConnectionWatch {
+        let startedAt: Date
+        var sawActive = false
+        var downSince: Date?
+        var trail: [String] = []
+    }
+
+    private static func statusName(_ status: NEVPNStatus) -> String {
+        switch status {
+        case .invalid: return "invalid"
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        case .reasserting: return "reasserting"
+        case .disconnecting: return "disconnecting"
+        @unknown default: return "unknown(\(status.rawValue))"
         }
     }
 
@@ -383,42 +439,110 @@ import NetworkExtension
     /// request to start it was accepted.
     ///
     /// `startVPNTunnel` only queues the request: it returns before the provider
-    /// process has launched, so anything that goes wrong inside startTunnel (a
-    /// rejected network-settings object, a core that never boots) still looks
-    /// like a successful start. Watching the status turns that into a real
-    /// error, and the boot log tail names the step that stopped.
+    /// process has launched. The status also passes through `disconnected` on
+    /// its way up, and on an older device that window is wider than a fixed
+    /// short wait -- an earlier version declared failure after one second and
+    /// reported "the tunnel did not come up" for tunnels that were starting
+    /// normally. The rules below only count a status that stays down, and the
+    /// failure carries the status trail plus the extension's startup log so the
+    /// step that stopped is named rather than guessed at.
     private func waitForConnection(
         _ connection: NEVPNConnection,
-        attempt: Int,
+        watch: ConnectionWatch,
         result: @escaping FlutterResult
     ) {
-        switch connection.status {
+        var watch = watch
+        let status = connection.status
+        let name = Self.statusName(status)
+        if watch.trail.last != name {
+            watch.trail.append(name)
+        }
+        let elapsed = Date().timeIntervalSince(watch.startedAt)
+
+        switch status {
         case .connected:
             result(true)
             return
-        case .disconnected, .invalid:
-            // The status is briefly disconnected between "start requested" and
-            // "provider launching", so only a status that stays down counts.
-            guard attempt >= 4 else { break }
-            result(FlutterError(
-                code: "start_failed",
-                message: "VPN 隧道没有起来。\n扩展启动日志：\n" + Self.bootLogTail(),
-                details: nil
-            ))
-            return
+        case .connecting, .reasserting:
+            watch.sawActive = true
+            watch.downSince = nil
+        case .disconnected, .invalid, .disconnecting:
+            if watch.sawActive {
+                if watch.downSince == nil {
+                    watch.downSince = Date()
+                } else if Date().timeIntervalSince(watch.downSince!) >= Self.afterActivityGrace {
+                    result(Self.tunnelDownError(watch))
+                    return
+                }
+            } else if elapsed >= Self.launchGrace {
+                result(Self.tunnelDownError(watch))
+                return
+            }
         default:
             break
         }
-        guard attempt < 24 else {
-            // Still connecting after 6s. Booting the core takes up to 45s, far
-            // longer than this wait, so report success and let the core calls
-            // wait on their own.
+
+        guard elapsed < Self.connectBudget else {
+            // Still coming up. The provider answers the core calls itself, so
+            // the app does not wait on the boot here.
             result(true)
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            self.waitForConnection(connection, attempt: attempt + 1, result: result)
+            self.waitForConnection(connection, watch: watch, result: result)
         }
+    }
+
+    /// One line per environmental fact that decides whether a tunnel can start
+    /// at all. A sideloaded build gets these wrong silently, and each one fails
+    /// the tunnel in a different way, so they travel with every start failure.
+    private static func contextNote() -> [String] {
+        var lines: [String] = []
+        if groupHomeDir() == nil {
+            lines.append("App Group 容器 \(appGroupId) 不可用：主 App 与扩展无法共享数据目录。")
+        }
+        if !extensionEmbedded {
+            lines.append("安装包里没有 FlClashService.appex，系统不会启动扩展。")
+        }
+        return lines
+    }
+
+    /// The failure a start request ends with, annotated with everything that is
+    /// actually knowable on the device: the status trail, whether the container
+    /// and the extension are even present, and the provider's own log.
+    private static func tunnelDownError(_ watch: ConnectionWatch) -> FlutterError {
+        var lines: [String] = []
+        lines.append("VPN 隧道没有起来（隧道状态：" + watch.trail.joined(separator: " → ") + "）。")
+        lines.append(contentsOf: contextNote())
+        let log = bootLogTail()
+        if log.isEmpty {
+            lines.append("扩展没有写入启动日志，说明扩展进程从未执行到 startTunnel"
+                + "（被系统拒绝启动），或 App Group 容器不可用。")
+        } else {
+            lines.append("扩展启动日志（最新在最后）：")
+            lines.append(log)
+        }
+        return FlutterError(
+            code: "start_failed",
+            message: lines.joined(separator: "\n"),
+            details: [
+                "statusTrail": watch.trail,
+                "elapsed": Date().timeIntervalSince(watch.startedAt),
+                "appGroupAvailable": groupHomeDir() != nil,
+                "extensionEmbedded": extensionEmbedded,
+            ]
+        )
+    }
+
+    /// Whether the bundle actually carries the packet-tunnel extension. A
+    /// packaging step that drops PlugIns/ leaves the app able to save a VPN
+    /// configuration and then unable to start it, with no other symptom.
+    static var extensionEmbedded: Bool {
+        guard let plugins = Bundle.main.builtInPlugInsURL else { return false }
+        var isDirectory: ObjCBool = false
+        let path = plugins.appendingPathComponent("FlClashService.appex").path
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
     }
 
     private func stop(_ result: @escaping FlutterResult) {

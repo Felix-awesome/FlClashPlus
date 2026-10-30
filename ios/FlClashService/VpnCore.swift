@@ -28,6 +28,16 @@ final class VpnCore {
             .path
     }
 
+    /// The extension's own data directory, with the same layout as the shared
+    /// one. Only used when the App Group container does not exist: on a
+    /// pseudo-signed install the entitlement can be present while the container
+    /// the system should have created for it is not, and the tunnel is more
+    /// useful up-and-unshared than down-and-unexplained.
+    static var ownHomeDir: String {
+        (NSHomeDirectory() as NSString)
+            .appendingPathComponent("Library/Application Support/flclash")
+    }
+
     private let homeDir: String
     private let stack: String
     private let address: String
@@ -115,7 +125,21 @@ final class VpnCore {
             BootLog.write("core: QuickSetup answered in \(elapsed)")
         }
 
-        guard let fd = tunnelProvider.packetFlow.value(forKeyPath: "socket.fileDescriptor") as? Int32 else {
+        // The utun socket is only exposed once the network settings above are
+        // applied, and the boot now runs right after startTunnel returns: give
+        // the property a few tries instead of turning a moment's delay into a
+        // dead tunnel with an unexplainable message.
+        var descriptor: Int32?
+        for attempt in 1...5 {
+            descriptor = tunnelProvider.packetFlow.value(
+                forKeyPath: "socket.fileDescriptor") as? Int32
+            if descriptor != nil {
+                break
+            }
+            BootLog.write("core: packet flow fd not ready yet (attempt \(attempt))")
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        guard let fd = descriptor else {
             lastError = "unable to obtain packet flow file descriptor"
             BootLog.write("core: no packet flow file descriptor")
             throw NSError(domain: "FlClash", code: 2,

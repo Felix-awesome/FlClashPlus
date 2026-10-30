@@ -16,6 +16,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// an empty reply -- on a device there is no console to read it from.
     private var lastStartError = ""
 
+    /// Set when the system tears the tunnel down while the core is still
+    /// booting in the background. The boot then stops itself instead of leaving
+    /// a tun stack running with no tunnel to carry its packets to.
+    private var stopping = false
+
     /// Fails startTunnel with a message that survives the failure.
     private func fail(
         _ code: Int,
@@ -33,6 +38,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         BootLog.write("startTunnel entered")
+        stopping = false
         // The tunnel configuration (home dir, stack, address, dns) is delivered
         // from the containing app through the protocolConfiguration.
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
@@ -46,11 +52,24 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let configuredHomeDir = (providerConfig["home-dir"] as? String).flatMap {
             $0.isEmpty ? nil : $0
         }
-        guard let homeDir = configuredHomeDir ?? VpnCore.groupHomeDir else {
-            fail(1, "unable to resolve home dir: no provider config and the "
-                + "group.com.follow.clash container is unavailable",
-                completion: completionHandler)
-            return
+        let homeDir: String
+        if let configured = configuredHomeDir {
+            homeDir = configured
+        } else if let group = VpnCore.groupHomeDir {
+            homeDir = group
+        } else {
+            // No App Group container. A pseudo-signed (TrollStore/ldid) install
+            // can end up with the entitlement but without the container the
+            // system is supposed to create for it. Refusing to start here only
+            // produced "the tunnel did not come up", which names none of the
+            // causes and is indistinguishable from a signing problem; booting
+            // into the extension's own container at least gets a live tunnel and
+            // a readable log, and the app then learns the real reason from the
+            // core call instead of from a tunnel that never appeared.
+            homeDir = VpnCore.ownHomeDir
+            BootLog.write("warning: the \(VpnCore.appGroup) container is unavailable; "
+                + "booting into the extension container instead. The app cannot share "
+                + "its config with this directory.")
         }
         BootLog.write("home dir: \(homeDir)")
 
@@ -98,23 +117,46 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     + error.localizedDescription, completion: completionHandler)
                 return
             }
-            BootLog.write("network settings installed, booting core")
+            BootLog.write("network settings installed")
 
             let core = VpnCore(homeDir: homeDir, stack: stack, address: address, dns: dns, mtu: mtu)
             self.vpnCore = core
 
-            do {
-                try core.start(packetFlow: self.packetFlow, tunnelProvider: self)
-                BootLog.write("startTunnel done")
-                completionHandler(nil)
-            } catch {
-                self.fail(5, error.localizedDescription, completion: completionHandler)
+            // Answer the system now, and boot the core on another queue.
+            //
+            // This call is what moves the connection's status from "connecting"
+            // to "connected". Holding it until QuickSetup returned (up to 45s on
+            // a first run, longer on an old device) made the app's own start
+            // watch give up with "the tunnel did not come up" while the provider
+            // was in fact booting normally -- and it turned every core-boot
+            // failure into the same, cause-less message. Returning here instead
+            // lets the tunnel report itself up in seconds; core calls wait for
+            // readiness on their own, and a boot failure is reported through
+            // them (lastStartError) instead of being swallowed.
+            completionHandler(nil)
+            BootLog.write("startTunnel answered; core boots in background")
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try core.start(packetFlow: self.packetFlow, tunnelProvider: self)
+                    BootLog.write("core boot finished: tun live")
+                } catch {
+                    self.lastStartError = error.localizedDescription
+                    BootLog.write("core boot failed: " + error.localizedDescription)
+                }
+                // The tunnel may have been torn down while the boot ran; a tun
+                // stack with no tunnel above it would keep the packet flow open.
+                if self.stopping {
+                    BootLog.write("stop arrived during core boot; stopping the core")
+                    core.stop()
+                }
             }
         }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         BootLog.write("stopTunnel reason=\(reason.rawValue)")
+        stopping = true
         vpnCore?.stop()
         vpnCore = nil
         completionHandler()
