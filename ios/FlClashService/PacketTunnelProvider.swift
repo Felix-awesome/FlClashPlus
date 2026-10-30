@@ -138,7 +138,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let startError = lastStartError
         let started = Date()
         BootLog.write("app call \(Self.methodName(in: message)) waiting for core")
-        waitForCore(timeout: 45) { [weak self] core in
+        // Two waits are stacked here and their lengths have to differ: this one
+        // covers VpnCore's own 45s wait for QuickSetup plus the StartTun that
+        // follows it. Equal timeouts made the two give up in the same instant,
+        // so a slow first init always answered nil a moment before the core
+        // went live.
+        waitForCore(timeout: 75) { [weak self] core in
             guard let core = core else {
                 let setupError = self?.vpnCore?.lastError ?? ""
                 let reason = startError.isEmpty ? setupError : startError
@@ -153,15 +158,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // The core answers on its own goroutine, so the reply is handed back
             // through completionHandler. The watchdog keeps a lost answer from
             // wedging the Dart future forever; ReplyOnce makes sure the handler
-            // still runs exactly once.
+            // still runs exactly once. It has to outlast the wait above.
             let reply = ReplyOnce(completionHandler)
             core.invoke(message) { text in
                 reply.send(text.data(using: .utf8))
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 120) {
                 reply.send(Self.notReadyReply(
                     request: message,
-                    reason: "核心 60 秒内没有返回结果"))
+                    reason: "核心 120 秒内没有返回结果"))
             }
         }
     }
