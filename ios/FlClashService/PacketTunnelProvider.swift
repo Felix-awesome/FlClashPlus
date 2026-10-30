@@ -21,6 +21,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// a tun stack running with no tunnel to carry its packets to.
     private var stopping = false
 
+    /// Set when the background core boot threw. A call then answers with the
+    /// reason at once instead of waiting out the readiness timeout for a core
+    /// that will never become ready.
+    private var bootFailed = false
+
     /// Fails startTunnel with a message that survives the failure.
     private func fail(
         _ code: Int,
@@ -39,6 +44,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         BootLog.write("startTunnel entered")
         stopping = false
+        bootFailed = false
         // The tunnel configuration (home dir, stack, address, dns) is delivered
         // from the containing app through the protocolConfiguration.
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
@@ -141,6 +147,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     try core.start(packetFlow: self.packetFlow, tunnelProvider: self)
                     BootLog.write("core boot finished: tun live")
                 } catch {
+                    self.bootFailed = true
                     self.lastStartError = error.localizedDescription
                     BootLog.write("core boot failed: " + error.localizedDescription)
                 }
@@ -178,8 +185,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // when it still runs out, the reply carries the reason instead of being
         // empty, so the app can say why rather than "did not answer".
         let startError = lastStartError
+        let method = Self.methodName(in: message)
+        if bootFailed {
+            // The core threw while booting: it will not become ready, so the
+            // call is answered with the reason immediately rather than making
+            // the app wait out the readiness timeout for nothing.
+            BootLog.write("app call \(method) answered at once: core boot failed")
+            completionHandler?(Self.notReadyReply(
+                request: message,
+                reason: startError.isEmpty ? "核心启动失败" : startError))
+            return
+        }
         let started = Date()
-        BootLog.write("app call \(Self.methodName(in: message)) waiting for core")
+        BootLog.write("app call \(method) waiting for core")
         // Two waits are stacked here and their lengths have to differ: this one
         // covers VpnCore's own 45s wait for QuickSetup plus the StartTun that
         // follows it. Equal timeouts made the two give up in the same instant,
@@ -189,13 +207,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             guard let core = core else {
                 let setupError = self?.vpnCore?.lastError ?? ""
                 let reason = startError.isEmpty ? setupError : startError
-                BootLog.write("app call \(Self.methodName(in: message)) gave up after "
+                BootLog.write("app call \(method) gave up after "
                     + String(format: "%.1fs", Date().timeIntervalSince(started))
                     + ": \(reason.isEmpty ? "core never became ready" : reason)")
                 completionHandler?(Self.notReadyReply(request: message, reason: reason))
                 return
             }
-            BootLog.write("core ready for \(Self.methodName(in: message)) after "
+            BootLog.write("core ready for \(method) after "
                 + String(format: "%.1fs", Date().timeIntervalSince(started)))
             // The core answers on its own goroutine, so the reply is handed back
             // through completionHandler. The watchdog keeps a lost answer from
