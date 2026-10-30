@@ -85,6 +85,8 @@ final class VpnCore {
         let resultHandler = ResultCallback()
         let ready = DispatchSemaphore(value: 0)
         resultHandler.onAnswer = { _ in ready.signal() }
+        BootLog.write("core: QuickSetup begin (homeDir=\(homeDir))")
+        let setupStarted = Date()
         MobileQuickSetup(initParams, setupParams, resultHandler)
 
         // A first init loads the geo databases and compiles the whole rule set,
@@ -97,23 +99,29 @@ final class VpnCore {
         // once it is up.
         let answered = ready.wait(timeout: .now() + 45) == .success
         let setupError = resultHandler.result
+        let elapsed = String(format: "%.1fs", Date().timeIntervalSince(setupStarted))
         if !answered {
             lastError = "core setup did not finish within 45s"
-            NSLog("[FlClash] %@", lastError)
+            BootLog.write("core: QuickSetup gave no answer after \(elapsed); "
+                + "carrying on so the tunnel still comes up")
         } else if !setupError.isEmpty {
             // The core already fell back to its built-in config, which has no
             // proxies. That is recoverable: the app pushes the real config over
             // handleAppMessage once the tunnel is up, so leave a trace rather
             // than refusing to start.
             lastError = "core setup reported: " + setupError
-            NSLog("[FlClash] %@", lastError)
+            BootLog.write("core: QuickSetup answered in \(elapsed) with error: \(setupError)")
+        } else {
+            BootLog.write("core: QuickSetup answered in \(elapsed)")
         }
 
         guard let fd = tunnelProvider.packetFlow.value(forKeyPath: "socket.fileDescriptor") as? Int32 else {
             lastError = "unable to obtain packet flow file descriptor"
+            BootLog.write("core: no packet flow file descriptor")
             throw NSError(domain: "FlClash", code: 2,
                 userInfo: [NSLocalizedDescriptionKey: lastError])
         }
+        BootLog.write("core: packet flow fd=\(fd)")
 
         let options = VpnCore.jsonString([
             "mtu": mtu,
@@ -125,12 +133,14 @@ final class VpnCore {
             lastError = lastError.isEmpty
                 ? "MobileStartTun failed"
                 : lastError + "; MobileStartTun failed"
+            BootLog.write("core: MobileStartTun returned false (\(lastError))")
             throw NSError(domain: "FlClash", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: lastError])
         }
 
         started = true
         isReady = true
+        BootLog.write("core: MobileStartTun ok, tunnel live")
     }
 
     func stop() {
@@ -149,7 +159,14 @@ final class VpnCore {
     /// instead of read back from the call.
     func invoke(_ json: String, completion: @escaping (String) -> Void) {
         let callback = ResultCallback()
-        callback.onAnswer = { text in completion(text) }
+        callback.onAnswer = { text in
+            if text.isEmpty {
+                // The core answered with nothing: either it is not running or
+                // the method panicked and the export swallowed it.
+                BootLog.write("core: invoke answered nothing")
+            }
+            completion(text)
+        }
         MobileInvokeMethod(json, callback)
     }
 

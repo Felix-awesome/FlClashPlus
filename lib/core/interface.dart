@@ -158,6 +158,13 @@ abstract class CoreHandlerInterface with CoreInterface {
     Duration? timeout,
   });
 
+  /// Extra context attached to a "did not answer" failure.
+  ///
+  /// A silent core has many causes and the generic message names none of them,
+  /// so a platform that can explain itself adds a line or two here. The default
+  /// is empty: only the transports with something to report override it.
+  Future<String> coreDiagnostics() async => '';
+
   Future<String> _invokeMessage({
     required CoreMethod method,
     Object? arguments,
@@ -169,9 +176,12 @@ abstract class CoreHandlerInterface with CoreInterface {
       timeout: timeout,
     );
     if (message == null) {
+      final details = await coreDiagnostics();
       throw CoreMethodException(
         code: 'no_response',
-        message: 'Core did not answer ${method.name}',
+        message: details.isEmpty
+            ? 'Core did not answer ${method.name}'
+            : 'Core did not answer ${method.name}\n$details',
       );
     }
     return message;

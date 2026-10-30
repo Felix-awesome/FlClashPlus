@@ -180,6 +180,20 @@ class IOSService {
     return stopped ?? false;
   }
 
+  /// The tail of the tunnel extension's startup log.
+  ///
+  /// The extension writes one line per startup step into the shared container
+  /// because its own NSLog output never reaches the app. Reading it back is the
+  /// only way to say which step of the provider actually failed.
+  Future<String> getBootLog() async {
+    try {
+      return await _call(() => vpnChannel.invokeMethod<String>('getBootLog')) ??
+          '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   /// Initializes the iOS service. The core lives in the extension process, so
   /// there is nothing to initialize here.
   Future<String> init() async => '';

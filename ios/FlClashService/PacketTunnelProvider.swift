@@ -23,7 +23,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         completion: @escaping (Error?) -> Void
     ) {
         lastStartError = message
-        NSLog("[FlClash] startTunnel failed: %@", message)
+        BootLog.write("startTunnel failed: \(message)")
         completion(NSError(
             domain: "FlClash",
             code: code,
@@ -32,6 +32,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+        BootLog.write("startTunnel entered")
         // The tunnel configuration (home dir, stack, address, dns) is delivered
         // from the containing app through the protocolConfiguration.
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
@@ -51,11 +52,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 completion: completionHandler)
             return
         }
+        BootLog.write("home dir: \(homeDir)")
 
         let stack = providerConfig["stack"] as? String ?? "gvisor"
         let address = providerConfig["address"] as? String ?? "198.18.0.1/30"
         let dns = providerConfig["dns"] as? String ?? "198.18.0.1"
         let mtu = (providerConfig["mtu"] as? NSNumber)?.intValue ?? 9000
+        BootLog.write("stack=\(stack) address=\(address) dns=\(dns) mtu=\(mtu)")
 
         guard let parsed = Self.splitCIDR(address) else {
             fail(1, "invalid tunnel address: " + address,
@@ -83,19 +86,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         settings.dnsSettings = dnsSettings
         settings.mtu = NSNumber(value: mtu)
 
+        BootLog.write("installing tunnel network settings")
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self = self else { return }
             if let error = error {
+                // This is the first Apple API that touches the provider, and the
+                // one that fails when the settings themselves are rejected
+                // (bad routes, unsupported DNS match domains). Logging it apart
+                // from the core boot below is what tells the two apart later.
                 self.fail(4, "setTunnelNetworkSettings failed: "
                     + error.localizedDescription, completion: completionHandler)
                 return
             }
+            BootLog.write("network settings installed, booting core")
 
             let core = VpnCore(homeDir: homeDir, stack: stack, address: address, dns: dns, mtu: mtu)
             self.vpnCore = core
 
             do {
                 try core.start(packetFlow: self.packetFlow, tunnelProvider: self)
+                BootLog.write("startTunnel done")
                 completionHandler(nil)
             } catch {
                 self.fail(5, error.localizedDescription, completion: completionHandler)
@@ -104,6 +114,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        BootLog.write("stopTunnel reason=\(reason.rawValue)")
         vpnCore?.stop()
         vpnCore = nil
         completionHandler()
@@ -125,14 +136,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // when it still runs out, the reply carries the reason instead of being
         // empty, so the app can say why rather than "did not answer".
         let startError = lastStartError
+        let started = Date()
+        BootLog.write("app call \(Self.methodName(in: message)) waiting for core")
         waitForCore(timeout: 45) { [weak self] core in
             guard let core = core else {
                 let setupError = self?.vpnCore?.lastError ?? ""
                 let reason = startError.isEmpty ? setupError : startError
-                NSLog("[FlClash] core is not ready: %@", reason)
+                BootLog.write("app call \(Self.methodName(in: message)) gave up after "
+                    + String(format: "%.1fs", Date().timeIntervalSince(started))
+                    + ": \(reason.isEmpty ? "core never became ready" : reason)")
                 completionHandler?(Self.notReadyReply(request: message, reason: reason))
                 return
             }
+            BootLog.write("core ready for \(Self.methodName(in: message)) after "
+                + String(format: "%.1fs", Date().timeIntervalSince(started)))
             // The core answers on its own goroutine, so the reply is handed back
             // through completionHandler. The watchdog keeps a lost answer from
             // wedging the Dart future forever; ReplyOnce makes sure the handler
@@ -187,6 +204,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             self.pollCore(deadline: deadline, completion: completion)
         }
+    }
+
+    /// The `method` field of a core call, for the log. The whole call is too
+    /// large to write on every message (a config push carries the profile).
+    private static func methodName(in message: String) -> String {
+        guard let data = message.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let method = object["method"] as? String else {
+            return "unknown"
+        }
+        return method
     }
 
     /// Builds a reply the app decodes as a core error.

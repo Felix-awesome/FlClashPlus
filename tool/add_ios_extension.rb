@@ -108,7 +108,7 @@ src_group = project.main_group.find_subpath('FlClashService', true)
 src_group.path = 'FlClashService'
 src_group.source_tree = '<group>'
 
-%w[PacketTunnelProvider.swift VpnCore.swift].each do |name|
+%w[PacketTunnelProvider.swift VpnCore.swift BootLog.swift].each do |name|
   path = File.join(ios_dir, 'FlClashService', name)
   abort "missing source: #{path}" unless File.exist?(path)
   ref = src_group.new_file(name)

@@ -129,9 +129,38 @@ class CoreIOS extends CoreHandlerInterface {
     // tunnel is usually connecting/connected here; re-issuing startVPNTunnel
     // throws in that state. Treat an already-running tunnel as success.
     if (await _service?.getStatus() ?? false) {
+      // A tunnel that is already up was started outside start() (the system
+      // brought it back after a relaunch, for example). Core calls wait on this
+      // completer, so it has to be completed here too -- otherwise every call
+      // sits out the full connection timeout and fails as unanswered.
+      if (!_connectedCompleter.isCompleted) {
+        _connectedCompleter.complete(true);
+      }
       return true;
     }
-    return await _service?.start() ?? false;
+    final started = await _service?.start() ?? false;
+    if (started && !_connectedCompleter.isCompleted) {
+      _connectedCompleter.complete(true);
+    }
+    return started;
+  }
+
+  /// Explains a silent core in words the dialog can show.
+  ///
+  /// "Core did not answer setupConfig" is only true: it says nothing about
+  /// which half of the connection failed. The extension writes its startup
+  /// steps into the shared container, so the reply names the step it stopped
+  /// at instead of leaving the reader to guess.
+  @override
+  Future<String> coreDiagnostics() async {
+    final running = await _service?.getStatus() ?? false;
+    final boot = (await _service?.getBootLog() ?? '').trim();
+    final lines = <String>[
+      running ? 'VPN 隧道：已连接' : 'VPN 隧道：未连接',
+      if (boot.isNotEmpty) '扩展启动日志（最新在最后）：',
+      if (boot.isNotEmpty) boot,
+    ];
+    return lines.join('\n');
   }
 
   @override

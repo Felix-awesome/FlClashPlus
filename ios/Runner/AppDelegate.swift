@@ -80,6 +80,23 @@ import NetworkExtension
         )
     }
 
+    /// The tail of the extension's startup log.
+    ///
+    /// The extension writes one line per startup step into the shared container
+    /// (see BootLog.swift). Nothing else survives a provider that stops
+    /// halfway: the process cannot be attached to on a sideloaded device, and
+    /// its NSLog output never reaches the app. Reading the file back turns
+    /// "core did not answer" into the step that actually failed.
+    static func bootLogTail(maxBytes: Int = 6000) -> String {
+        guard let home = groupHomeDir() else { return "" }
+        let path = (home as NSString).appendingPathComponent("boot.log")
+        guard let data = FileManager.default.contents(atPath: path) else {
+            return ""
+        }
+        let slice = data.count > maxBytes ? data.suffix(maxBytes) : data
+        return String(decoding: slice, as: UTF8.self)
+    }
+
     override func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -175,6 +192,8 @@ import NetworkExtension
             // The Dart side asks for this instead of path_provider's app
             // container, which the extension cannot read.
             result(Self.groupHomeDir())
+        case "getBootLog":
+            result(Self.bootLogTail())
         case "getDiagnostics":
             // Signing-related facts a sideloaded build can get wrong, in one
             // reply, so a failure can be explained instead of guessed at.
@@ -332,15 +351,73 @@ import NetworkExtension
                     result(Self.describe(reloadError))
                     return
                 }
+                // The tunnel outlives the app: after a relaunch the connection
+                // is often already up, and asking to start it again makes
+                // NetworkExtension throw and the app report a start failure on
+                // a tunnel that never stopped.
+                switch manager.connection.status {
+                case .connected, .connecting, .reasserting:
+                    self.cachedManager = manager
+                    result(true)
+                    return
+                default:
+                    break
+                }
                 do {
                     try manager.connection.startVPNTunnel()
                     self.cachedManager = manager
                     self.runTime = Date()
-                    result(true)
+                    self.waitForConnection(
+                        manager.connection,
+                        attempt: 0,
+                        result: result
+                    )
                 } catch {
                     result(FlutterError(code: "start_failed", message: error.localizedDescription, details: nil))
                 }
             }
+        }
+    }
+
+    /// Reports whether the tunnel actually came up instead of whether the
+    /// request to start it was accepted.
+    ///
+    /// `startVPNTunnel` only queues the request: it returns before the provider
+    /// process has launched, so anything that goes wrong inside startTunnel (a
+    /// rejected network-settings object, a core that never boots) still looks
+    /// like a successful start. Watching the status turns that into a real
+    /// error, and the boot log tail names the step that stopped.
+    private func waitForConnection(
+        _ connection: NEVPNConnection,
+        attempt: Int,
+        result: @escaping FlutterResult
+    ) {
+        switch connection.status {
+        case .connected:
+            result(true)
+            return
+        case .disconnected, .invalid:
+            // The status is briefly disconnected between "start requested" and
+            // "provider launching", so only a status that stays down counts.
+            guard attempt >= 4 else { break }
+            result(FlutterError(
+                code: "start_failed",
+                message: "VPN 隧道没有起来。\n扩展启动日志：\n" + Self.bootLogTail(),
+                details: nil
+            ))
+            return
+        default:
+            break
+        }
+        guard attempt < 24 else {
+            // Still connecting after 6s. Booting the core takes up to 45s, far
+            // longer than this wait, so report success and let the core calls
+            // wait on their own.
+            result(true)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            self.waitForConnection(connection, attempt: attempt + 1, result: result)
         }
     }
 
