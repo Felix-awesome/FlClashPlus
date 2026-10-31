@@ -152,6 +152,39 @@ void main() {
     });
   });
 
+  group('validateConfig', () {
+    // A profile can only be checked by a core, and on iOS the core only exists
+    // inside the tunnel extension. With the VPN off there is nothing to ask, so
+    // the call is answered "nothing to report" instead of failing: refusing it
+    // blocked adding a subscription before the first connection, which is when
+    // one is usually added, and the message named the missing core rather than
+    // anything about the config.
+    test('accepts a profile unvalidated when no tunnel is running', () async {
+      when(() => service.getStatus()).thenAnswer((_) async => false);
+
+      final message = await core.validateConfig('/tmp/flclash-profile.yaml');
+
+      expect(message, isEmpty);
+      verifyNever(() => service.invokeMethod(any()));
+    });
+
+    test('forwards the check when the core is up', () async {
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
+      when(() => service.start()).thenAnswer((_) async => true);
+      when(
+        () => service.invokeMethod(any()),
+      ).thenAnswer((_) async => const CoreMethodResponse(result: 'bad proxy'));
+
+      await core.start();
+      final message = await core.validateConfig('/tmp/flclash-profile.yaml');
+
+      expect(message, 'bad proxy');
+      verify(() => service.invokeMethod(any())).called(1);
+    });
+  });
+
   group('invokeMethod', () {
     test('forwards the call and unwraps the result', () async {
       when(

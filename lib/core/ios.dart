@@ -161,6 +161,31 @@ class CoreIOS extends CoreHandlerInterface {
     return started;
   }
 
+  /// Checks a profile with the core, when there is a core to check it.
+  ///
+  /// On iOS the core only ever exists inside the tunnel extension, so with the
+  /// VPN off there is nothing anywhere that could read the file. Failing the
+  /// call there made adding a subscription impossible in exactly the situation
+  /// it is usually added -- before the first connection -- and the message it
+  /// produced ("Core did not answer validateConfig") describes an absence, not
+  /// a bad config, so it sent the reader looking in the wrong place.
+  ///
+  /// The config is still checked for real later, by the same core: setupConfig
+  /// hands it over when the tunnel comes up, and a rejection is reported there
+  /// with the core's own text. An accepted-but-unvalidated profile is a
+  /// deferred check, not a skipped one.
+  @override
+  Future<String> validateConfig(String path) async {
+    if (!await _waitForConnection(CoreMethod.validateConfig)) {
+      commonPrint.log(
+        'Skipping validation of $path: no core is running to validate it',
+        logLevel: LogLevel.warning,
+      );
+      return '';
+    }
+    return super.validateConfig(path);
+  }
+
   /// Explains a silent core in words the dialog can show.
   ///
   /// "Core did not answer setupConfig" is only true: it says nothing about
