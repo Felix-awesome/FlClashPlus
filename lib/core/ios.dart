@@ -67,9 +67,23 @@ class CoreIOS extends CoreHandlerInterface {
     }
     final revision = ++_lifecycleRevision;
     if (_connectedCompleter.isCompleted) {
-      return CoreLifecycleResult(
-        revision: revision,
-        outcome: CoreLifecycleOutcome.coalesced,
+      // A completed gate only records that a tunnel came up once, in this
+      // session. It does not mean the tunnel is still there: the system tears
+      // one down for reasons it never tells the app (a configuration rewrite
+      // reports itself to the extension as `stopTunnel reason=9`, the user can
+      // switch it off in Settings, the system can drop it). Trusting the gate
+      // then answered "already running" for the rest of the session, so a
+      // dropped tunnel could not be started again without relaunching the app.
+      if (await (_service?.getStatus() ?? false)) {
+        return CoreLifecycleResult(
+          revision: revision,
+          outcome: CoreLifecycleOutcome.coalesced,
+        );
+      }
+      _connectedCompleter = Completer<bool>();
+      commonPrint.log(
+        'The tunnel this session started is gone; starting it again',
+        logLevel: LogLevel.warning,
       );
     }
     // Save the tunnel config (home dir etc.) then start the tunnel. The
@@ -170,10 +184,13 @@ class CoreIOS extends CoreHandlerInterface {
   /// produced ("Core did not answer validateConfig") describes an absence, not
   /// a bad config, so it sent the reader looking in the wrong place.
   ///
-  /// The config is still checked for real later, by the same core: setupConfig
-  /// hands it over when the tunnel comes up, and a rejection is reported there
-  /// with the core's own text. An accepted-but-unvalidated profile is a
-  /// deferred check, not a skipped one.
+  /// The same applies when the tunnel exists but its provider cannot answer: a
+  /// tunnel is torn down and rebuilt underneath the app often enough (starting
+  /// it rewrites the configuration, the system drops it, the user switches it
+  /// off) that an import must not fail on it. This check is therefore
+  /// best-effort, and the authoritative one is elsewhere: setupConfig hands the
+  /// file to the core when the tunnel comes up, and a rejection is reported
+  /// there with the core's own text.
   @override
   Future<String> validateConfig(String path) async {
     if (!await _waitForConnection(CoreMethod.validateConfig)) {
@@ -183,7 +200,17 @@ class CoreIOS extends CoreHandlerInterface {
       );
       return '';
     }
-    return super.validateConfig(path);
+    try {
+      return await super.validateConfig(path);
+    } catch (error) {
+      await _forgetConnectionIfTunnelIsGone();
+      commonPrint.log(
+        'Validation of $path was not answered ($error); it is checked again '
+        'when the profile is applied',
+        logLevel: LogLevel.warning,
+      );
+      return '';
+    }
   }
 
   /// Explains a silent core in words the dialog can show.
@@ -248,13 +275,44 @@ class CoreIOS extends CoreHandlerInterface {
       return null;
     }
     final id = '${++_methodCallId}';
-    final response = await _service?.invokeMethod(
-      CoreMethodCall(id: id, method: method, arguments: arguments),
-    );
+    final CoreMethodResponse? response;
+    try {
+      response = await _service?.invokeMethod(
+        CoreMethodCall(id: id, method: method, arguments: arguments),
+      );
+    } catch (_) {
+      // `sendProviderMessage` failed outright: the provider process is not
+      // there. Drop the stale gate before the failure travels on, so the next
+      // call (and the next start) behaves as it should.
+      await _forgetConnectionIfTunnelIsGone();
+      rethrow;
+    }
     if (response == null) {
+      await _forgetConnectionIfTunnelIsGone();
       return null;
     }
     return response.unwrap<T>();
+  }
+
+  /// Drops the cached "a tunnel is up" state once there is no tunnel.
+  ///
+  /// The gate is completed by a successful start and would otherwise stay
+  /// completed for the life of the process, so a tunnel that went away left
+  /// every later call being sent to a provider that no longer exists -- and
+  /// failing as "Core did not answer" for whatever method it was, which names
+  /// nothing.
+  Future<void> _forgetConnectionIfTunnelIsGone() async {
+    if (!_connectedCompleter.isCompleted) {
+      return;
+    }
+    if (await (_service?.getStatus() ?? false)) {
+      return;
+    }
+    _connectedCompleter = Completer<bool>();
+    commonPrint.log(
+      'The tunnel is gone; the next core call will check before it is sent',
+      logLevel: LogLevel.warning,
+    );
   }
 
   /// Whether a core call should be sent now.

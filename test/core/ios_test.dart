@@ -5,6 +5,7 @@ import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/ios.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/plugins/ios_service.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
@@ -99,11 +100,31 @@ void main() {
         () => service.saveConfig(homeDir: any(named: 'homeDir')),
       ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
+      when(() => service.getStatus()).thenAnswer((_) async => true);
 
       await core.start();
       final result = await core.start();
 
       expect(result.outcome, CoreLifecycleOutcome.coalesced);
+    });
+
+    // The tunnel does not belong to the app: the system can drop it, the user
+    // can switch it off, and preparing a start rewrites its configuration,
+    // which stops it. A gate that stays completed after that reported "already
+    // running" for the rest of the session, so nothing could bring the tunnel
+    // back without relaunching.
+    test('start starts again when the tunnel it built is gone', () async {
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
+      when(() => service.start()).thenAnswer((_) async => true);
+      when(() => service.getStatus()).thenAnswer((_) async => false);
+
+      await core.start();
+      final result = await core.start();
+
+      expect(result.outcome, CoreLifecycleOutcome.applied);
+      verify(() => service.start()).called(2);
     });
 
     test('close marks the core closed and stops the tunnel', () async {
@@ -182,6 +203,26 @@ void main() {
 
       expect(message, 'bad proxy');
       verify(() => service.invokeMethod(any())).called(1);
+    });
+
+    // A tunnel that was there a moment ago can be gone by the time the file
+    // arrives: rewriting the tunnel's configuration stops the provider, and a
+    // reply then never comes. Failing the import for that reported a config
+    // problem that did not exist.
+    test('accepts a profile the extension could not answer for', () async {
+      when(
+        () => service.saveConfig(homeDir: any(named: 'homeDir')),
+      ).thenAnswer((_) async => true);
+      when(() => service.start()).thenAnswer((_) async => true);
+      when(() => service.getStatus()).thenAnswer((_) async => true);
+      when(() => service.invokeMethod(any())).thenThrow(
+        PlatformException(code: 'send_failed'),
+      );
+
+      await core.start();
+      final message = await core.validateConfig('/tmp/flclash-profile.yaml');
+
+      expect(message, isEmpty);
     });
   });
 

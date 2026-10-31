@@ -97,6 +97,82 @@ import NetworkExtension
         return String(decoding: slice, as: UTF8.self)
     }
 
+    // MARK: - App-side log
+
+    private static let logQueue = DispatchQueue(label: "com.follow.clash.applog")
+
+    private static let logFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+
+    /// Appends one line to the same log the extension writes.
+    ///
+    /// Only the extension logged anything, so "the tunnel stopped by itself"
+    /// had one witness and it could not name the cause: the extension sees
+    /// `stopTunnel reason=9` -- the configuration was removed underneath it --
+    /// but not who removed it. Start, stop, save and every status transition
+    /// are recorded here too, prefixed `app: `, so a single reading explains
+    /// both sides of the connection.
+    static func log(_ message: String) {
+        NSLog("[FlClash] app: %@", message)
+        logQueue.async {
+            guard let home = groupHomeDir() else { return }
+            let path = (home as NSString).appendingPathComponent("boot.log")
+            let stamp = logFormatter.string(from: Date())
+            guard let data = "\(stamp) app: \(message)\n".data(using: .utf8) else {
+                return
+            }
+            let url = URL(fileURLWithPath: path)
+            if !FileManager.default.fileExists(atPath: path) {
+                try? data.write(to: url)
+                return
+            }
+            guard let handle = try? FileHandle(forWritingTo: url) else { return }
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        }
+    }
+
+    /// Where the tunnel's status is reported from. Kept so one connection is
+    /// watched once, and so a new manager replaces the old watch.
+    private var statusObserver: NSObjectProtocol?
+    private weak var observedConnection: NEVPNConnection?
+
+    /// Records every status transition of one connection.
+    ///
+    /// This is the only place the app learns that a tunnel went away without
+    /// being asked to stop -- the system tears it down for reasons of its own
+    /// (a configuration rewrite, the user switching it off in Settings, the
+    /// system dropping it), and the app was left believing the connection it
+    /// once established was still there.
+    private func observeStatus(of connection: NEVPNConnection) {
+        if observedConnection === connection, statusObserver != nil {
+            return
+        }
+        if let existing = statusObserver {
+            NotificationCenter.default.removeObserver(existing)
+        }
+        observedConnection = connection
+        statusObserver = NotificationCenter.default.addObserver(
+            forName: .NEVPNStatusDidChange,
+            object: connection,
+            queue: .main
+        ) { note in
+            guard let changed = note.object as? NEVPNConnection else { return }
+            Self.log("tunnel status -> \(Self.statusName(changed.status))")
+        }
+    }
+
+    /// Caches the manager and starts watching its connection.
+    private func remember(_ manager: NETunnelProviderManager) {
+        cachedManager = manager
+        observeStatus(of: manager.connection)
+    }
+
     override func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -264,6 +340,18 @@ import NetworkExtension
         }
     }
 
+    /// Whether two provider configurations say the same thing.
+    ///
+    /// Compared as dictionaries rather than with `==`: the values read back from
+    /// preferences are NSString/NSNumber while the ones built here are Swift
+    /// `String`/`Bool`, and `[String: Any]` is not Equatable at all.
+    private static func sameConfiguration(
+        _ left: [String: Any],
+        _ right: [String: Any]
+    ) -> Bool {
+        (left as NSDictionary).isEqual(right as NSDictionary)
+    }
+
     private func saveConfig(_ args: [String: Any], result: @escaping FlutterResult) {
         loadTunnelManager(createIfMissing: true) { manager, error in
             if let error = error {
@@ -297,14 +385,43 @@ import NetworkExtension
             }
             proto.providerConfiguration = providerConfig
 
+            // A save the system reads as a change tears down whatever is
+            // running on it -- the extension logs that as `stopTunnel reason=9`
+            // (configuration removed), and it is the only trace a save leaves.
+            // Rewriting a configuration that is already there cannot change what
+            // the extension does, so it is skipped: otherwise preparing to start
+            // the tunnel stops the tunnel that is still up, and the app is left
+            // with a connection it believes in and a provider that is gone.
+            //
+            // Checked before the new value is assigned, since afterwards this
+            // would be comparing the configuration with itself.
+            let existing = manager.protocolConfiguration as? NETunnelProviderProtocol
+            if let existing = existing,
+               manager.isEnabled,
+               existing.serverAddress == proto.serverAddress,
+               existing.providerBundleIdentifier == proto.providerBundleIdentifier,
+               Self.sameConfiguration(
+                   existing.providerConfiguration ?? [:],
+                   providerConfig
+               ) {
+                Self.log("saveConfig skipped: nothing changed")
+                self.remember(manager)
+                result(true)
+                return
+            }
+
             manager.protocolConfiguration = proto
             manager.localizedDescription = "FlClash"
 
+            Self.log("saveConfig writing (tunnel "
+                + Self.statusName(manager.connection.status) + ")")
             self.persist(manager) { error in
                 if let error = error {
+                    Self.log("saveConfig failed: " + error.localizedDescription)
                     result(FlutterError(code: "save_failed", message: error.localizedDescription, details: nil))
                 } else {
-                    self.cachedManager = manager
+                    Self.log("saveConfig written")
+                    self.remember(manager)
                     result(true)
                 }
             }
@@ -352,13 +469,15 @@ import NetworkExtension
                     result(Self.describe(reloadError))
                     return
                 }
+                Self.log("start requested (tunnel "
+                    + Self.statusName(manager.connection.status) + ")")
                 // The tunnel outlives the app: after a relaunch the connection
                 // is often already up, and asking to start it again makes
                 // NetworkExtension throw and the app report a start failure on
                 // a tunnel that never stopped.
                 switch manager.connection.status {
                 case .connected, .connecting, .reasserting:
-                    self.cachedManager = manager
+                    self.remember(manager)
                     result(true)
                     return
                 case .disconnecting where attempt < 40:
@@ -376,7 +495,8 @@ import NetworkExtension
                 }
                 do {
                     try manager.connection.startVPNTunnel()
-                    self.cachedManager = manager
+                    Self.log("startVPNTunnel issued")
+                    self.remember(manager)
                     self.runTime = Date()
                     self.waitForConnection(
                         manager.connection,
@@ -384,6 +504,7 @@ import NetworkExtension
                         result: result
                     )
                 } catch {
+                    Self.log("startVPNTunnel threw: " + error.localizedDescription)
                     let context = Self.contextNote()
                     result(FlutterError(
                         code: "start_failed",
@@ -547,6 +668,8 @@ import NetworkExtension
 
     private func stop(_ result: @escaping FlutterResult) {
         let stopNow: (NETunnelProviderManager?) -> Void = { manager in
+            Self.log("stop requested (tunnel "
+                + Self.statusName(manager?.connection.status ?? .invalid) + ")")
             manager?.connection.stopVPNTunnel()
             result(true)
         }
@@ -585,7 +708,7 @@ import NetworkExtension
                 if let error = error {
                     result(FlutterError(code: "permission_failed", message: error.localizedDescription, details: nil))
                 } else {
-                    self.cachedManager = manager
+                    self.remember(manager)
                     result(true)
                 }
             }
@@ -630,7 +753,7 @@ extension AppDelegate {
                     message: "the tunnel is not configured or not running", details: nil))
                 return
             }
-            self.cachedManager = manager
+            self.remember(manager)
             self.relay(data, over: session, result: result)
         }
     }
