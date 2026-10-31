@@ -167,27 +167,36 @@ final class VpnCore {
         BootLog.write("core: network settings installed in "
             + String(format: "%.1fs", Date().timeIntervalSince(installStarted)))
 
-        // The utun socket is only exposed once the network settings above are
-        // applied, and the boot now runs right after startTunnel returns: give
-        // the property a few tries instead of turning a moment's delay into a
-        // dead tunnel with an unexplainable message.
-        var descriptor: Int32?
-        for attempt in 1...5 {
-            descriptor = tunnelProvider.packetFlow.value(
-                forKeyPath: "socket.fileDescriptor") as? Int32
-            if descriptor != nil {
-                break
-            }
-            BootLog.write("core: packet flow fd not ready yet (attempt \(attempt))")
-            Thread.sleep(forTimeInterval: 0.2)
-        }
-        guard let fd = descriptor else {
-            lastError = "unable to obtain packet flow file descriptor"
-            BootLog.write("core: no packet flow file descriptor")
+        // The descriptor is resolved through the utun socket that the settings
+        // above just created -- and *only* through it.
+        //
+        // The shortcut everyone copied (`packetFlow.value(forKeyPath:
+        // "socket.fileDescriptor")`) answers nil on current iOS, which is what
+        // this tunnel reported on a real device: five tries, always nil, and a
+        // tunnel that died seconds after it appeared. The socket itself does
+        // exist in this process, so it is found by asking the kernel which
+        // interface each descriptor belongs to; that is the fallback clashmi
+        // uses, and mihomo's tun reads the 4-byte utun header itself.
+        guard let descriptor = TunSocket.acquire(from: tunnelProvider.packetFlow) else {
+            lastError = "unable to obtain the utun socket of this tunnel"
+            BootLog.write("core: no utun socket in this process; "
+                + "traffic cannot be taken over")
             throw NSError(domain: "FlClash", code: 2,
                 userInfo: [NSLocalizedDescriptionKey: lastError])
         }
-        BootLog.write("core: packet flow fd=\(fd)")
+
+        // The core takes ownership of what it is given and closes it
+        // (tun.Start dups the descriptor, then closes the original). This one
+        // belongs to the packet flow, so a duplicate is what goes over:
+        // closing that leaves the framework's own descriptor -- and the tunnel
+        // -- intact.
+        guard let fd = TunSocket.detached(descriptor) else {
+            lastError = "could not duplicate the utun descriptor"
+            BootLog.write("core: dup of fd \(descriptor) failed")
+            throw NSError(domain: "FlClash", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: lastError])
+        }
+        BootLog.write("core: tun fd=\(fd) (from \(descriptor))")
 
         let options = VpnCore.jsonString([
             "mtu": mtu,
@@ -346,4 +355,115 @@ private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
 /// and the semaphore in `start` needs the outcome of a callback it does not own.
 private final class Box<Value>: @unchecked Sendable {
     var value: Value?
+}
+
+/// Finds the utun descriptor of the tunnel's packet flow.
+///
+/// There is no supported API for this: NetworkExtension is meant to hand
+/// packets out through `readPackets`, and a core that wants a socket reads one
+/// itself. Every client that runs a tun-based core in an extension therefore
+/// borrows the descriptor from underneath, and there are exactly two ways to
+/// get it:
+///
+/// - `packetFlow.value(forKeyPath: "socket.fileDescriptor")`, the long-standing
+///   shortcut. It stopped answering on current iOS versions -- it returns nil
+///   rather than throwing, which made a dead tunnel look like a slow one.
+/// - Asking the kernel. `getsockopt(fd, ...)` reports the interface a socket is
+///   attached to, so walking the descriptors of this process and keeping the one
+///   whose interface is named `utun*` finds the same socket.
+///
+/// Both are tried, kernel first being unreliable on some builds and the
+/// shortcut being nil on others; whichever answers is used.
+enum TunSocket {
+
+    /// How long the descriptor is waited for after the network settings are in.
+    ///
+    /// The socket belongs to a flow the system sets up asynchronously, so the
+    /// first look can come too early. The wait is bounded because the routes
+    /// are already pointing at this tunnel: every second spent here is a second
+    /// with no traffic, so failing fast is better than hanging politely.
+    private static let waitDuration: TimeInterval = 15
+
+    private static let pollInterval: TimeInterval = 0.25
+
+    static func acquire(from flow: NEPacketTunnelFlow) -> Int32? {
+        let deadline = Date().addingTimeInterval(waitDuration)
+        var attempt = 0
+        while true {
+            attempt += 1
+            if let fd = fromPacketFlow(flow) {
+                BootLog.write("core: utun fd \(fd) came from the packet flow")
+                return fd
+            }
+            if let fd = scan() {
+                BootLog.write("core: utun fd \(fd) came from the descriptor scan")
+                return fd
+            }
+            if Date() >= deadline {
+                BootLog.write("core: no utun socket appeared in "
+                    + String(format: "%.1fs", waitDuration)
+                    + " (\(attempt) looks); the packet flow has no socket to borrow")
+                return nil
+            }
+            if attempt == 3 {
+                // One delivery request, dropped on the floor.
+                //
+                // The flow attaches its utun socket when it is asked to
+                // deliver, and a tunnel that has just come up may not have been
+                // asked yet -- which would hide the descriptor from the scan
+                // even though the interface exists. The batch is discarded: the
+                // core is not reading yet, and every packet that is lost here
+                // is one the sender's own protocol retransmits.
+                BootLog.write("core: priming the packet flow with one read")
+                flow.readPackets { _, _ in }
+            }
+            Thread.sleep(forTimeInterval: pollInterval)
+        }
+    }
+
+    /// A duplicate of [fd] for a caller that closes what it is handed.
+    static func detached(_ fd: Int32) -> Int32? {
+        let copy = dup(fd)
+        return copy >= 0 ? copy : nil
+    }
+
+    /// The private shortcut, kept for the builds where it still answers.
+    private static func fromPacketFlow(_ flow: NEPacketTunnelFlow) -> Int32? {
+        guard let value = flow.value(forKeyPath: "socket.fileDescriptor") else {
+            return nil
+        }
+        if let number = value as? NSNumber {
+            let fd = number.int32Value
+            return fd > 0 ? fd : nil
+        }
+        if let fd = value as? Int32 {
+            return fd > 0 ? fd : nil
+        }
+        return nil
+    }
+
+    /// The descriptor whose socket sits on an interface named `utun*`.
+    ///
+    /// Several can exist (an older session that has not been reaped yet, for
+    /// instance), and the newest is the one this tunnel just created, so the
+    /// highest descriptor wins.
+    private static func scan() -> Int32? {
+        var found: Int32?
+        var fd: Int32 = 0
+        while fd <= 1024 {
+            var name = [CChar](repeating: 0, count: Int(IFNAMSIZ))
+            var length = socklen_t(name.count)
+            // Level/option 2/2 is the pair that reports the bound interface
+            // name; it succeeds on sockets and fails on everything else, which
+            // is also how non-sockets are skipped.
+            let result = name.withUnsafeMutableBytes { buffer in
+                getsockopt(fd, 2, 2, buffer.baseAddress, &length)
+            }
+            if result == 0, String(cString: name).hasPrefix("utun") {
+                found = fd
+            }
+            fd += 1
+        }
+        return found
+    }
 }
