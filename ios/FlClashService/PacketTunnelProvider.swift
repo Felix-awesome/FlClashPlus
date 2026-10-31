@@ -137,14 +137,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.lastStartError = error.localizedDescription
                 BootLog.write("core boot failed: " + error.localizedDescription)
                 // A tunnel whose core never came up can only black-hole the
-                // traffic it was given, and the settings above are applied
-                // inside the core's startup -- so nothing has been taken yet.
-                // Tearing it down returns networking to the device and puts the
-                // failure where the user can read it.
-                if !self.stopping {
-                    self.cancelTunnel(with: error)
+                // traffic it was given -- the routes are installed inside the
+                // core's startup, so by the time this throws, packets are
+                // already being handed to a flow nobody drains. Killing the
+                // provider is the one way to make the system take the tunnel
+                // down again (clashmi does the same), which returns networking
+                // to the device and leaves the reason in the startup log.
+                if self.stopping {
+                    return
                 }
-                return
+                BootLog.write("exiting so the system tears the tunnel down")
+                exit(EXIT_FAILURE)
             }
             if self.stopping {
                 BootLog.write("stop arrived during core boot; stopping the core")
