@@ -215,9 +215,9 @@ void main() {
       ).thenAnswer((_) async => true);
       when(() => service.start()).thenAnswer((_) async => true);
       when(() => service.getStatus()).thenAnswer((_) async => true);
-      when(() => service.invokeMethod(any())).thenThrow(
-        PlatformException(code: 'send_failed'),
-      );
+      when(
+        () => service.invokeMethod(any()),
+      ).thenThrow(PlatformException(code: 'send_failed'));
 
       await core.start();
       final message = await core.validateConfig('/tmp/flclash-profile.yaml');
