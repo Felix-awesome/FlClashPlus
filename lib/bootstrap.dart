@@ -9,6 +9,7 @@ import 'package:fl_clash/common/launch.dart';
 import 'package:fl_clash/common/migration.dart';
 import 'package:fl_clash/common/tray.dart';
 import 'package:fl_clash/common/window.dart';
+import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -179,6 +180,22 @@ class Bootstrap {
       return;
     }
     await _showCrashRecoveryTip();
+    if (system.isIOS) {
+      // On iOS the core runs inside the tunnel extension and boots the instant
+      // the tunnel comes up -- earlier than initCore() reaches the geo copy in
+      // CoreController.init(). Starting without them makes that first setup
+      // fail, and the tunnel then carries traffic for a core that never applied
+      // a config. Preparing them here is cheap: the copy is skipped once the
+      // files exist.
+      try {
+        await CoreController.initGeo();
+      } catch (error) {
+        commonPrint.log(
+          'Failed to prepare geo data: $error',
+          logLevel: LogLevel.error,
+        );
+      }
+    }
     await _container.read(coreActionProvider.notifier).startCore();
     if (!_bootDecision.isDegraded) {
       await _container.read(setupActionProvider.notifier).initStatus();
