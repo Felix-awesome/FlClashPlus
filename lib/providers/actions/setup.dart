@@ -793,17 +793,17 @@ class SetupAction extends _$SetupAction {
     await globalState.loadingRun(
       () async {
         try {
-          // The core inside the tunnel extension reads this file on its own
-          // when it boots -- a cold start, or a relaunch the app did not
-          // orchestrate. Writing it only when there was no base left that boot
-          // with whatever a config-less launch had written (an empty file), so
-          // the extension came up against nothing and every call after it
-          // failed. The yaml written here is the same config setupConfig
-          // applies, so the two never disagree.
-          if (yamlString.isNotEmpty) {
-            final configFilePath = await appPath.configFilePath;
-            await File(configFilePath).writeAsStringAtomically(yamlString);
-          }
+          // Written every time, not only on the no-base path.
+          //
+          // The core inside the tunnel extension reads this file on its own when
+          // it boots -- a cold start, or a relaunch the app did not orchestrate
+          // -- and it used to find whatever a config-less launch had left there.
+          // The yaml written here is the same config setupConfig applies, so the
+          // two never disagree. A build that failed writes the empty string on
+          // purpose: the core must not keep running a config the app has just
+          // rejected.
+          final configFilePath = await appPath.configFilePath;
+          await File(configFilePath).writeAsStringAtomically(yamlString);
           final profileId = profile?.id;
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
