@@ -107,13 +107,23 @@ func loadConfigWithBase(base *SetupBase, configPath string) (*config.Config, err
 	if err := document.Decode(raw); err != nil {
 		return nil, err
 	}
-	if err := writeConfigDocument(configPath, document); err != nil {
-		return nil, err
-	}
 	cfg, err := config.ParseRawConfig(raw)
 	if err != nil {
 		return nil, err
 	}
+	// Written only once the merged config is known to parse. Writing it first
+	// put a config the core was about to reject on disk, where the next cold
+	// start read it back, failed on it, and fell back to the built-in default
+	// -- turning one bad push into a core that cannot serve until someone
+	// pushes a good one, which needs the network the bad config already broke.
+	if err := writeConfigDocument(configPath, document); err != nil {
+		return nil, err
+	}
+	// A profile file may carry `dns: enable: false` of its own, and a tun
+	// hijacks the device's resolver into this core: with DNS off that resolver
+	// answers nothing, which takes the whole device offline rather than merely
+	// leaving it unproxied.
+	enableDnsForTunnel(cfg, "the applied profile turns dns off")
 	return withPlatformLimits(cfg), nil
 }
 

@@ -722,6 +722,78 @@ func TestLoadConfigTreatsAnEmptyProfileAsTheDefaults(t *testing.T) {
 	}
 }
 
+func withDeviceTunnel(t *testing.T, enabled bool) {
+	t.Helper()
+	previous := deviceTunnel
+	deviceTunnel = enabled
+	t.Cleanup(func() { deviceTunnel = previous })
+}
+
+// A fresh install has no profile, so the app writes an empty config.yaml before
+// the tunnel starts. mihomo parses that into its defaults, which have DNS off,
+// and a tun hijacks the device's resolver into this core: with DNS off it
+// answers nothing and the device cannot resolve a single name.
+func TestLoadConfigGivesAnEmptyProfileAResolver(t *testing.T) {
+	withDeviceTunnel(t, true)
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+
+	if err != nil {
+		t.Fatalf("loadConfig = %v", err)
+	}
+	if cfg.DNS == nil || !cfg.DNS.Enable {
+		t.Fatal("an empty profile left DNS disabled, so the tunnel would answer no lookup")
+	}
+	if len(cfg.DNS.NameServer) == 0 {
+		t.Fatal("an empty profile left DNS with no nameserver to ask")
+	}
+}
+
+// It is a tunnel-only rule: a desktop has the system resolver and never carries
+// the device's traffic, so its empty profile keeps mihomo's own defaults.
+func TestLoadConfigLeavesDnsAloneOffATunnel(t *testing.T) {
+	withDeviceTunnel(t, false)
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+
+	if err != nil {
+		t.Fatalf("loadConfig = %v", err)
+	}
+	if cfg.DNS == nil || cfg.DNS.Enable {
+		t.Fatal("a desktop profile had its DNS turned on")
+	}
+}
+
+// Only the empty file is rewritten: a profile that says what it wants keeps it.
+func TestLoadConfigKeepsTheDnsOfANonEmptyProfile(t *testing.T) {
+	withDeviceTunnel(t, true)
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	profile := "dns:\n  enable: false\n  nameserver:\n    - 1.1.1.1\n"
+	if err := os.WriteFile(path, []byte(profile), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+
+	if err != nil {
+		t.Fatalf("loadConfig = %v", err)
+	}
+	if cfg.DNS == nil || cfg.DNS.Enable {
+		t.Fatal("a profile that turns DNS off had it turned back on")
+	}
+}
+
 func TestLoadConfigReportsAMissingFile(t *testing.T) {
 	_, err := loadConfig(filepath.Join(t.TempDir(), "absent.yaml"))
 

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -116,6 +117,13 @@ func handleDecryptConfig(params DecryptConfigParams) (string, error) {
 // policy answers by killing the process rather than with EPERM.
 var systemTimeWritable = runtime.GOOS != "android"
 
+// Where the tunnel owns the network stack instead of an app.
+//
+// It decides one thing only: whether the core has to answer DNS itself. A
+// desktop app can always fall back on the system resolver; a tun that points
+// the device's resolver at this core has no such escape.
+var deviceTunnel = runtime.GOOS == "android" || runtime.GOOS == "ios"
+
 func loadConfig(path string) (*config.Config, error) {
 	buf, err := os.ReadFile(path)
 	if err != nil {
@@ -125,7 +133,49 @@ func loadConfig(path string) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	enableDnsForEmptyProfile(buf, cfg)
 	return withPlatformLimits(cfg), nil
+}
+
+// Gives an empty config.yaml a resolver.
+//
+// An empty file is how the app says "no profile selected", and mihomo parses it
+// into its own defaults -- which have DNS switched off, and a core with DNS off
+// leaves resolver.DefaultResolver nil. On a desktop that costs nothing: the
+// system resolver still answers.
+//
+// Under a tun it is fatal, and silently so. The tunnel points the device's DNS
+// at this core, nothing answers, and every lookup hangs for as long as the
+// tunnel is up -- including the lookup needed to download the profile that
+// would fix it. That is why importing a subscription failed with a connection
+// error or a timeout while the tunnel was connected, and why it kept failing
+// after every reinstall: a fresh install has no profile, so the app writes an
+// empty config.yaml before the tunnel ever starts.
+//
+// Turning DNS on is the whole fix: the nameservers mihomo defaults to are real
+// ones, and an empty profile has no rules, so everything routes DIRECT and the
+// tunnel carries traffic instead of swallowing it.
+func enableDnsForEmptyProfile(buf []byte, cfg *config.Config) {
+	if len(bytes.TrimSpace(buf)) > 0 {
+		return
+	}
+	enableDnsForTunnel(cfg, "config.yaml is empty (no profile selected)")
+}
+
+// Makes sure a config a tun is about to hand all of the device's traffic to can
+// answer a lookup.
+//
+// With DNS off mihomo sets resolver.DefaultResolver to nil, and a tun that
+// hijacks 198.18.0.1:53 into such a core has nowhere to send the query: the
+// device keeps its interface and loses the ability to resolve anything at all.
+// A desktop app cannot end up here, because its traffic never depends on the
+// core for resolution.
+func enableDnsForTunnel(cfg *config.Config, reason string) {
+	if !deviceTunnel || cfg.DNS == nil || cfg.DNS.Enable {
+		return
+	}
+	cfg.DNS.Enable = true
+	log.Warnln("dns enabled for this tunnel: %s; without a resolver the device would resolve nothing", reason)
 }
 
 func withPlatformLimits(cfg *config.Config) *config.Config {
@@ -166,7 +216,16 @@ func applyConfig(params *SetupParams) error {
 			"config apply failed, falling back to the built-in default - no proxies will be available: %v",
 			err,
 		)
-		fallback, fallbackErr := config.ParseRawConfig(config.DefaultRawConfig())
+		rawFallback := config.DefaultRawConfig()
+		// The same trap as an empty profile, reached by a different road. The
+		// built-in default has DNS off, so a config the core rejected would
+		// take the device's resolver down with it instead of merely leaving it
+		// unproxied -- and the tun would then be carrying traffic for a core
+		// that cannot resolve a single name.
+		if deviceTunnel {
+			rawFallback.DNS.Enable = true
+		}
+		fallback, fallbackErr := config.ParseRawConfig(rawFallback)
 		if fallbackErr != nil {
 			return err
 		}
