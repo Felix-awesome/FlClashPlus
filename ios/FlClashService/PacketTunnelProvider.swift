@@ -95,24 +95,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // settings installed here: without setTunnelNetworkSettings the tunnel
         // comes up but carries nothing. Splitting the IPv4 space into two /1
         // routes overrides the default route without touching it.
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
-
-        let ipv4 = NEIPv4Settings(addresses: [parsed.address], subnetMasks: [parsed.mask])
-        ipv4.includedRoutes = [
-            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "255.255.255.254"),
-            NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "255.255.255.254"),
-        ]
-        settings.ipv4Settings = ipv4
-
-        // An empty matchDomain captures every DNS query, so the core's fake-IP
-        // resolver sees all lookups.
-        let dnsSettings = NEDNSSettings(servers: [dns])
-        dnsSettings.matchDomains = [""]
-        settings.dnsSettings = dnsSettings
-        settings.mtu = NSNumber(value: mtu)
-
+        //
+        // These settings are installed once, before the core boots. Applying
+        // them a second time to "hand over" the traffic afterwards would rebuild
+        // the utun interface, and the file descriptor the core is already
+        // reading would go stale. The black-hole window this leaves instead is
+        // closed from the other end: a core that fails to boot cancels the
+        // tunnel (see below), so the device gets its networking back rather than
+        // sitting on a connection that looks up and carries nothing.
         BootLog.write("installing tunnel network settings")
-        setTunnelNetworkSettings(settings) { [weak self] error in
+        setTunnelNetworkSettings(Self.settings(
+            address: parsed.address,
+            mask: parsed.mask,
+            dns: dns,
+            mtu: mtu
+        )) { [weak self] error in
             guard let self = self else { return }
             if let error = error {
                 // This is the first Apple API that touches the provider, and the
@@ -123,7 +120,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     + error.localizedDescription, completion: completionHandler)
                 return
             }
-            BootLog.write("network settings installed")
+            BootLog.write("network settings installed; core boots in background")
 
             let core = VpnCore(homeDir: homeDir, stack: stack, address: address, dns: dns, mtu: mtu)
             self.vpnCore = core
@@ -150,15 +147,48 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     self.bootFailed = true
                     self.lastStartError = error.localizedDescription
                     BootLog.write("core boot failed: " + error.localizedDescription)
+                    // Without a core this tunnel can only black-hole traffic,
+                    // and it has not taken any yet. Tearing it down gives the
+                    // device its networking back and puts the failure where the
+                    // user can see it, instead of leaving a connection that
+                    // looks up but carries nothing.
+                    if !self.stopping {
+                        self.cancelTunnel(with: error)
+                    }
+                    return
                 }
-                // The tunnel may have been torn down while the boot ran; a tun
-                // stack with no tunnel above it would keep the packet flow open.
                 if self.stopping {
                     BootLog.write("stop arrived during core boot; stopping the core")
                     core.stop()
                 }
             }
         }
+    }
+
+    /// Builds the tunnel's network settings: the interface address, the two /1
+    /// routes that take over from the default route, and a catch-all DNS match
+    /// domain so the core's fake-IP resolver sees every lookup.
+    private static func settings(
+        address: String,
+        mask: String,
+        dns: String,
+        mtu: Int
+    ) -> NEPacketTunnelNetworkSettings {
+        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
+
+        let ipv4 = NEIPv4Settings(addresses: [address], subnetMasks: [mask])
+        ipv4.includedRoutes = [
+            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "255.255.255.254"),
+            NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "255.255.255.254"),
+        ]
+        settings.ipv4Settings = ipv4
+
+        let dnsSettings = NEDNSSettings(servers: [dns])
+        dnsSettings.matchDomains = [""]
+        settings.dnsSettings = dnsSettings
+
+        settings.mtu = NSNumber(value: mtu)
+        return settings
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
