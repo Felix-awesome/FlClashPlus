@@ -24,6 +24,17 @@ class CoreAction extends _$CoreAction {
   }
 
   Future<void> startCore() async {
+    // On iOS the core runs inside the tunnel extension, so starting it means
+    // bringing a VPN tunnel up. With no profile there is nothing for that core
+    // to apply: the tunnel takes every packet from a core that has no proxies,
+    // the app's own downloads go with it, and the user is told setupConfig
+    // failed while they are still adding their first subscription. Staying down
+    // until there is something to apply keeps the device online.
+    if (system.isIOS && ref.read(currentProfileProvider) == null) {
+      commonPrint.log('no profile yet; not bringing the tunnel up');
+      ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
+      return;
+    }
     ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
     try {
       final result = await startLifecycle();

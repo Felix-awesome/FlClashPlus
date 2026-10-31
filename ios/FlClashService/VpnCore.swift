@@ -75,6 +75,10 @@ final class VpnCore {
         try FileManager.default.createDirectory(
             atPath: homeDir, withIntermediateDirectories: true)
 
+        // The core reads GEOIP/GEOSITE while it loads its first config, which
+        // happens here and not on the app's schedule.
+        ensureGeoData()
+
         // JSON is produced by JSONSerialization rather than string literals so
         // there is no hand-rolled escaping to get wrong.
         let initParams = VpnCore.jsonString([
@@ -174,6 +178,69 @@ final class VpnCore {
             MobileStopTun()
             started = false
         }
+    }
+
+    /// Copies the geo databases into the core's home dir when they are missing.
+    ///
+    /// They ship inside the app's Flutter assets, and the app copies them into
+    /// the shared directory from Dart. This extension cannot wait for that: the
+    /// tunnel brings the core up on its own schedule, including a cold start
+    /// where the app has not run at all, and a core whose home dir has no
+    /// GEOIP/GEOSITE fails its initial setup -- leaving a tunnel that carries
+    /// traffic for a core which applied nothing. Only the missing files are
+    /// copied, so a normal launch costs four existence checks.
+    private func ensureGeoData() {
+        let names = ["ASN.mmdb", "GEOIP.dat", "GEOIP.metadb", "GEOSITE.dat"]
+        let missing = names.filter {
+            !FileManager.default.fileExists(
+                atPath: (homeDir as NSString).appendingPathComponent($0))
+        }
+        guard !missing.isEmpty else { return }
+        guard let source = VpnCore.geoAssetDirectory() else {
+            BootLog.write("core: geo assets are not in the app bundle; "
+                + "setup may fail without \(missing.joined(separator: ", "))")
+            return
+        }
+        let started = Date()
+        var copied: [String] = []
+        for name in missing {
+            let from = source.appendingPathComponent(name)
+            let to = (homeDir as NSString).appendingPathComponent(name)
+            do {
+                try FileManager.default.copyItem(atPath: from.path, toPath: to)
+                copied.append(name)
+            } catch {
+                BootLog.write("core: could not copy \(name): "
+                    + error.localizedDescription)
+            }
+        }
+        BootLog.write("core: geo data copied (\(copied.joined(separator: ", "))) in "
+            + String(format: "%.1fs", Date().timeIntervalSince(started)))
+    }
+
+    /// Locates the geo databases inside the containing app's bundle.
+    ///
+    /// The appex lives at `<app>/PlugIns/FlClashService.appex`, so the app
+    /// bundle is two levels up, and Flutter keeps its assets in App.framework.
+    /// Both layouts are checked because a build that inlines the assets would
+    /// put them directly under the app bundle.
+    private static func geoAssetDirectory() -> URL? {
+        let appBundle = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let candidates = [
+            appBundle.appendingPathComponent(
+                "Frameworks/App.framework/flutter_assets/assets/data"),
+            appBundle.appendingPathComponent("flutter_assets/assets/data"),
+            Bundle.main.bundleURL
+                .appendingPathComponent("flutter_assets/assets/data"),
+        ]
+        for candidate in candidates
+        where FileManager.default.fileExists(
+            atPath: candidate.appendingPathComponent("GEOIP.dat").path) {
+            return candidate
+        }
+        return nil
     }
 
     /// Forwards a JSON method call to the core. The core dispatches every

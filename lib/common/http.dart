@@ -40,6 +40,14 @@ class FlClashHttpOverrides extends HttpOverrides {
     if ([localhost].contains(url.host)) {
       return 'DIRECT';
     }
+    // On iOS the core runs inside the tunnel extension: the mixed port belongs
+    // to that process rather than to this one, and the tunnel already routes
+    // the app's own sockets through the core. Naming the port here only points
+    // every download at an address the app cannot rely on -- which is what
+    // makes "add profile from link" time out while the tunnel is up.
+    if (system.isIOS) {
+      return 'DIRECT';
+    }
     final isStart = read(isStartProvider);
     final suspend = read(suspendProvider);
     if (!isStart || suspend) return 'DIRECT';
