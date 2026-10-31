@@ -91,76 +91,64 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        // iOS only routes traffic into the tunnel that matches the network
-        // settings installed here: without setTunnelNetworkSettings the tunnel
-        // comes up but carries nothing. Splitting the IPv4 space into two /1
-        // routes overrides the default route without touching it.
+        // The settings that point this device's routes and DNS at the tunnel are
+        // built here but applied by the core's own startup (VpnCore.start).
         //
-        // These settings are installed once, before the core boots. Applying
-        // them a second time to "hand over" the traffic afterwards would rebuild
-        // the utun interface, and the file descriptor the core is already
-        // reading would go stale. The black-hole window this leaves instead is
-        // closed from the other end: a core that fails to boot cancels the
-        // tunnel (see below), so the device gets its networking back rather than
-        // sitting on a connection that looks up and carries nothing.
-        BootLog.write("installing tunnel network settings")
-        setTunnelNetworkSettings(Self.settings(
+        // That order matters more than it looks: installing them now would send
+        // every packet into a flow nobody drains until QuickSetup finishes, and
+        // on a first run that is tens of seconds of what the user experiences as
+        // the network simply dying -- including the profile download they are in
+        // the middle of. clashmi hands the settings over from inside its core's
+        // startup for exactly this reason.
+        let settings = Self.settings(
             address: parsed.address,
             mask: parsed.mask,
             dns: dns,
             mtu: mtu
-        )) { [weak self] error in
-            guard let self = self else { return }
-            if let error = error {
-                // This is the first Apple API that touches the provider, and the
-                // one that fails when the settings themselves are rejected
-                // (bad routes, unsupported DNS match domains). Logging it apart
-                // from the core boot below is what tells the two apart later.
-                self.fail(4, "setTunnelNetworkSettings failed: "
-                    + error.localizedDescription, completion: completionHandler)
+        )
+
+        let core = VpnCore(homeDir: homeDir, stack: stack, address: address, dns: dns, mtu: mtu)
+        vpnCore = core
+
+        // Answer the system now, and boot the core on another queue.
+        //
+        // This call is what moves the connection's status from "connecting" to
+        // "connected". Holding it until QuickSetup returned (up to 45s on a
+        // first run, longer on an old device) made the app's own start watch
+        // give up with "the tunnel did not come up" while the provider was in
+        // fact booting normally -- and it turned every core-boot failure into
+        // the same, cause-less message. Returning here instead lets the tunnel
+        // report itself up in seconds; core calls wait for readiness on their
+        // own, and a boot failure is reported through them (lastStartError)
+        // instead of being swallowed.
+        completionHandler(nil)
+        BootLog.write("startTunnel answered; core boots in background")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try core.start(
+                    packetFlow: self.packetFlow,
+                    tunnelProvider: self,
+                    settings: settings
+                )
+                BootLog.write("core boot finished: tun live")
+            } catch {
+                self.bootFailed = true
+                self.lastStartError = error.localizedDescription
+                BootLog.write("core boot failed: " + error.localizedDescription)
+                // A tunnel whose core never came up can only black-hole the
+                // traffic it was given, and the settings above are applied
+                // inside the core's startup -- so nothing has been taken yet.
+                // Tearing it down returns networking to the device and puts the
+                // failure where the user can read it.
+                if !self.stopping {
+                    self.cancelTunnel(with: error)
+                }
                 return
             }
-            BootLog.write("network settings installed; core boots in background")
-
-            let core = VpnCore(homeDir: homeDir, stack: stack, address: address, dns: dns, mtu: mtu)
-            self.vpnCore = core
-
-            // Answer the system now, and boot the core on another queue.
-            //
-            // This call is what moves the connection's status from "connecting"
-            // to "connected". Holding it until QuickSetup returned (up to 45s on
-            // a first run, longer on an old device) made the app's own start
-            // watch give up with "the tunnel did not come up" while the provider
-            // was in fact booting normally -- and it turned every core-boot
-            // failure into the same, cause-less message. Returning here instead
-            // lets the tunnel report itself up in seconds; core calls wait for
-            // readiness on their own, and a boot failure is reported through
-            // them (lastStartError) instead of being swallowed.
-            completionHandler(nil)
-            BootLog.write("startTunnel answered; core boots in background")
-
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    try core.start(packetFlow: self.packetFlow, tunnelProvider: self)
-                    BootLog.write("core boot finished: tun live")
-                } catch {
-                    self.bootFailed = true
-                    self.lastStartError = error.localizedDescription
-                    BootLog.write("core boot failed: " + error.localizedDescription)
-                    // Without a core this tunnel can only black-hole traffic,
-                    // and it has not taken any yet. Tearing it down gives the
-                    // device its networking back and puts the failure where the
-                    // user can see it, instead of leaving a connection that
-                    // looks up but carries nothing.
-                    if !self.stopping {
-                        self.cancelTunnel(with: error)
-                    }
-                    return
-                }
-                if self.stopping {
-                    BootLog.write("stop arrived during core boot; stopping the core")
-                    core.stop()
-                }
+            if self.stopping {
+                BootLog.write("stop arrived during core boot; stopping the core")
+                core.stop()
             }
         }
     }

@@ -793,7 +793,14 @@ class SetupAction extends _$SetupAction {
     await globalState.loadingRun(
       () async {
         try {
-          if (setupParams.base == null) {
+          // The core inside the tunnel extension reads this file on its own
+          // when it boots -- a cold start, or a relaunch the app did not
+          // orchestrate. Writing it only when there was no base left that boot
+          // with whatever a config-less launch had written (an empty file), so
+          // the extension came up against nothing and every call after it
+          // failed. The yaml written here is the same config setupConfig
+          // applies, so the two never disagree.
+          if (yamlString.isNotEmpty) {
             final configFilePath = await appPath.configFilePath;
             await File(configFilePath).writeAsStringAtomically(yamlString);
           }

@@ -71,7 +71,11 @@ final class VpnCore {
     /// Initializes the core and starts the tunnel on the packet flow's utun
     /// socket. This mirrors clashmi's approach: read the packet flow's private
     /// "socket.fileDescriptor" and hand it to the Go tun stack.
-    func start(packetFlow: NEPacketTunnelFlow, tunnelProvider: NEPacketTunnelProvider) throws {
+    func start(
+        packetFlow: NEPacketTunnelFlow,
+        tunnelProvider: NEPacketTunnelProvider,
+        settings: NEPacketTunnelNetworkSettings
+    ) throws {
         try FileManager.default.createDirectory(
             atPath: homeDir, withIntermediateDirectories: true)
 
@@ -129,12 +133,45 @@ final class VpnCore {
             BootLog.write("core: QuickSetup answered in \(elapsed)")
         }
 
+        // Traffic is handed over here, and not a moment earlier.
+        //
+        // These are the settings that point the device's routes and DNS at this
+        // tunnel. clashmi installs them from inside the core's own startup, once
+        // the core is ready to read the packet flow; doing it before the core
+        // boots means every packet goes into a flow nobody drains while setup
+        // runs, which the device experiences as its network dying -- including
+        // the profile download the user is in the middle of.
+        //
+        // It is applied exactly once: the descriptor read below is the one this
+        // settings pass produces, so nothing goes stale underneath the core.
+        BootLog.write("core: installing network settings (traffic takeover)")
+        let installStarted = Date()
+        let installed = DispatchSemaphore(value: 0)
+        let installError = Box<NSError>()
+        tunnelProvider.setTunnelNetworkSettings(settings) { error in
+            installError.value = error as NSError?
+            installed.signal()
+        }
+        guard installed.wait(timeout: .now() + 15) == .success else {
+            lastError = "setTunnelNetworkSettings timed out"
+            BootLog.write("core: network settings timed out after 15s")
+            throw NSError(domain: "FlClash", code: 4,
+                userInfo: [NSLocalizedDescriptionKey: lastError])
+        }
+        if let error = installError.value {
+            lastError = "setTunnelNetworkSettings failed: " + error.localizedDescription
+            BootLog.write("core: " + lastError)
+            throw NSError(domain: "FlClash", code: 4,
+                userInfo: [NSLocalizedDescriptionKey: lastError])
+        }
+        BootLog.write("core: network settings installed in "
+            + String(format: "%.1fs", Date().timeIntervalSince(installStarted)))
+
         // The utun socket is only exposed once the network settings above are
         // applied, and the boot now runs right after startTunnel returns: give
         // the property a few tries instead of turning a moment's delay into a
         // dead tunnel with an unexplainable message.
-        var descriptor: Int32?
-        for attempt in 1...5 {
+        var descriptor: Int32?        for attempt in 1...5 {
             descriptor = tunnelProvider.packetFlow.value(
                 forKeyPath: "socket.fileDescriptor") as? Int32
             if descriptor != nil {
@@ -300,4 +337,12 @@ private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
         lock.unlock()
         answer?(text)
     }
+}
+
+/// Carries a value out of an escaping completion that runs on another queue.
+///
+/// A local `var` captured by such a closure is what Swift 6 rejects outright,
+/// and the semaphore in `start` needs the outcome of a callback it does not own.
+private final class Box<Value>: @unchecked Sendable {
+    var value: Value?
 }
