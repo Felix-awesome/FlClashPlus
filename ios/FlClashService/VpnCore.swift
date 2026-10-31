@@ -149,7 +149,7 @@ final class VpnCore {
         let installed = DispatchSemaphore(value: 0)
         let installError = Box<NSError>()
         tunnelProvider.setTunnelNetworkSettings(settings) { error in
-            installError.value = error as NSError?
+            installError.value = error.map { $0 as NSError }
             installed.signal()
         }
         guard installed.wait(timeout: .now() + 15) == .success else {
@@ -171,7 +171,8 @@ final class VpnCore {
         // applied, and the boot now runs right after startTunnel returns: give
         // the property a few tries instead of turning a moment's delay into a
         // dead tunnel with an unexplainable message.
-        var descriptor: Int32?        for attempt in 1...5 {
+        var descriptor: Int32?
+        for attempt in 1...5 {
             descriptor = tunnelProvider.packetFlow.value(
                 forKeyPath: "socket.fileDescriptor") as? Int32
             if descriptor != nil {
