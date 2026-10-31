@@ -21,10 +21,19 @@ class LocationPermissions extends _$LocationPermissions {
   @override
   WifiSsidPermission build() => WifiSsidPermission.denied;
 
+  /// Whether this platform can report the Wi-Fi SSID at all.
+  ///
+  /// The wifi_ssid plugin ships no iOS implementation: the system exposes the
+  /// SSID only through NEHotspotNetwork, and reaching that needs an entitlement
+  /// a sideloaded build does not carry. The channel answers
+  /// MissingPluginException, and logging one every refresh buries the messages
+  /// that actually explain a failure.
+  bool get _supportsSsidLookup => !system.isIOS;
+
   /// Only a request can tell a permanent denial apart, so a check leaves that
   /// answer in place until it sees the grant.
   Future<void> refresh() async {
-    if (ref.read(safeModeProvider)) {
+    if (ref.read(safeModeProvider) || !_supportsSsidLookup) {
       return;
     }
     final WifiSsidPermission permission;
@@ -61,7 +70,7 @@ class LocationPermissions extends _$LocationPermissions {
   /// Null while another request is showing, so only the caller that raised
   /// the prompt follows up on the answer.
   Future<WifiSsidPermission?> request() async {
-    if (_requesting) {
+    if (_requesting || !_supportsSsidLookup) {
       return null;
     }
     _requesting = true;

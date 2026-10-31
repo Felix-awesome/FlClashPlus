@@ -59,9 +59,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             $0.isEmpty ? nil : $0
         }
         let homeDir: String
-        if let configured = configuredHomeDir {
+        if let configured = configuredHomeDir, Self.isUsableDirectory(configured) {
             homeDir = configured
-        } else if let group = VpnCore.groupHomeDir {
+        } else if let group = VpnCore.groupHomeDir, Self.isUsableDirectory(group) {
             homeDir = group
         } else {
             // No App Group container. A pseudo-signed (TrollStore/ldid) install
@@ -304,6 +304,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             ],
         ]
         return try? JSONSerialization.data(withJSONObject: payload)
+    }
+
+    /// Whether this extension can actually write to [path].
+    ///
+    /// The app hands over the path it resolved for its own home dir. When the
+    /// App Group container is missing, that path points inside the *app's*
+    /// sandbox, which this process is not allowed to touch: the core would then
+    /// fail to create its config and every call would time out without saying
+    /// why. Creating the directory is the check itself -- a sandboxed path
+    /// fails here, and a merely absent one is created on the spot.
+    private static func isUsableDirectory(_ path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        do {
+            try FileManager.default.createDirectory(
+                atPath: path, withIntermediateDirectories: true)
+        } catch {
+            return false
+        }
+        return FileManager.default.isWritableFile(atPath: path)
     }
 
     /// Turns "198.18.0.1/30" into ("198.18.0.1", "255.255.255.252").

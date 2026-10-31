@@ -194,6 +194,25 @@ class IOSService {
     }
   }
 
+  /// Signing facts the containing app can check on its own, without asking the
+  /// extension: whether the App Group container exists and whether the tunnel
+  /// extension was embedded in the bundle at all.
+  ///
+  /// Both are silently lost when a build with those entitlements is
+  /// re-signed with a profile that lacks them, and both look identical from
+  /// the outside ("the core never answered"). This call goes over the app's own
+  /// channel, so it still answers when the extension cannot be reached.
+  Future<Map<String, Object?>> getDiagnostics() async {
+    try {
+      return await _call(
+            () => vpnChannel.invokeMapMethod<String, Object?>('getDiagnostics'),
+          ) ??
+          const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
   /// Initializes the iOS service. The core lives in the extension process, so
   /// there is nothing to initialize here.
   Future<String> init() async => '';

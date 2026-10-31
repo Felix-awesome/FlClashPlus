@@ -18,6 +18,16 @@ import 'spill.dart';
 ///
 /// The actual core boot (QuickSetup + StartTun) happens inside the extension's
 /// PacketTunnelProvider, not here.
+/// How long a core call waits for the tunnel before it is sent.
+///
+/// On iOS "connected" means two things in sequence: the system builds the
+/// tunnel, and the extension boots the core inside it. On a first launch that
+/// takes tens of seconds on an older device -- far past the shared 10s gate.
+/// A call therefore gave up a moment before the tunnel came up, and the app
+/// reported "Core did not answer setupConfig" no matter how long the extension
+/// itself was willing to wait for its core: the request was never sent at all.
+const _iosConnectionWaitDuration = Duration(seconds: 60);
+
 class CoreIOS extends CoreHandlerInterface {
   static CoreIOS? _instance;
 
@@ -154,13 +164,27 @@ class CoreIOS extends CoreHandlerInterface {
   @override
   Future<String> coreDiagnostics() async {
     final running = await _service?.getStatus() ?? false;
+    // These come from the app's own channel, so they answer even when the
+    // extension cannot be reached at all -- which is exactly the case where
+    // the extension's own log file explains nothing.
+    final diagnostics = await _service?.getDiagnostics() ?? const {};
+    final appGroup = diagnostics['appGroupAvailable'] == true;
+    final embedded = diagnostics['extensionEmbedded'] == true;
+    final homeDir = diagnostics['appGroupPath'] as String? ?? '';
     final boot = (await _service?.getBootLog() ?? '').trim();
     final lines = <String>[
       running ? 'VPN 隧道：已连接' : 'VPN 隧道：未连接',
+      'App Group 共享目录：${appGroup ? '可用（$homeDir）' : '不可用'}',
+      '隧道扩展 FlClashService.appex：${embedded ? '已打包' : '未打包'}',
+      if (!appGroup)
+        'App Group 不可用：主 App 与扩展不共享数据目录，因此扩展的启动日志'
+            '也读不到。重签时描述文件缺少 App Groups 能力会这样。',
+      if (!embedded) '安装包里没有扩展，系统不会启动它，任何核心调用都不可能有人回应。',
+      if (boot.isEmpty && embedded) '扩展没有写入启动日志：它没有执行到 startTunnel，或被系统在启动时拒绝。',
       if (boot.isNotEmpty) '扩展启动日志（最新在最后）：',
       if (boot.isNotEmpty) boot,
     ];
-    return lines.join('\n');
+    return lines.where((line) => line.isNotEmpty).join('\n');
   }
 
   @override
@@ -189,7 +213,7 @@ class CoreIOS extends CoreHandlerInterface {
     Object? arguments,
   }) async {
     try {
-      await _connectedCompleter.future.timeout(coreConnectionWaitDuration);
+      await _connectedCompleter.future.timeout(_iosConnectionWaitDuration);
     } catch (error) {
       commonPrint.log(
         'Invoke method ${method.name} before connection timed out: $error',
