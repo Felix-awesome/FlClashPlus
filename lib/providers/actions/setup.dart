@@ -793,17 +793,24 @@ class SetupAction extends _$SetupAction {
     await globalState.loadingRun(
       () async {
         try {
-          // Written every time, not only on the no-base path.
+          // config.yaml is the core's own copy of the applied config, and who
+          // writes it depends on the shape of this profile:
           //
-          // The core inside the tunnel extension reads this file on its own when
-          // it boots -- a cold start, or a relaunch the app did not orchestrate
-          // -- and it used to find whatever a config-less launch had left there.
-          // The yaml written here is the same config setupConfig applies, so the
-          // two never disagree. A build that failed writes the empty string on
-          // purpose: the core must not keep running a config the app has just
-          // rejected.
-          final configFilePath = await appPath.configFilePath;
-          await File(configFilePath).writeAsStringAtomically(yamlString);
+          // - With a base (a subscription or a file), the core merges the
+          //   profile file into `overlay` and writes the result itself, in
+          //   loadConfigWithBase. Writing it here too would be a second,
+          //   different answer to the same question -- and a failed build would
+          //   overwrite the config the core is still running with an empty one.
+          // - Without a base, `yamlString` *is* the whole config and the core
+          //   only reads the file, so it has to be here before the call.
+          //
+          // This matters more than it looks on iOS: the core runs inside the
+          // tunnel extension and reads this same file from the App Group when
+          // it boots on its own, before the app has pushed anything.
+          if (setupParams.base == null) {
+            final configFilePath = await appPath.configFilePath;
+            await File(configFilePath).writeAsStringAtomically(yamlString);
+          }
           final profileId = profile?.id;
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
