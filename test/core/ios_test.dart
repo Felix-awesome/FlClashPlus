@@ -172,6 +172,7 @@ void main() {
     });
 
     test('returns null when the core never connects', () async {
+      when(() => service.getStatus()).thenAnswer((_) async => true);
       when(
         () => service.invokeMethod(any()),
       ).thenAnswer((_) async => const CoreMethodResponse(result: true));
@@ -182,6 +183,43 @@ void main() {
       );
 
       expect(result, isNull);
+    });
+
+    // With no tunnel there is nobody to answer, and waiting the connection
+    // timeout out for a call that can never arrive is what made adding a
+    // profile with the VPN off look like a hang.
+    test('a call with no tunnel is skipped instead of waited out', () async {
+      when(() => service.getStatus()).thenAnswer((_) async => false);
+      when(
+        () => service.invokeMethod(any()),
+      ).thenAnswer((_) async => const CoreMethodResponse(result: true));
+
+      final watch = Stopwatch()..start();
+      final result = await core.invokeMethod<bool>(
+        method: CoreMethod.getIsInit,
+      );
+      watch.stop();
+
+      expect(result, isNull);
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+      verifyNever(() => service.invokeMethod(any()));
+    });
+
+    // The system can bring the tunnel back on its own (on-demand, a relaunch),
+    // and the app only learns about it from a status query. That tunnel is
+    // worth waiting for: its extension is booting a core right now.
+    test('a call waits for a tunnel the system started by itself', () async {
+      when(() => service.getStatus()).thenAnswer((_) async => true);
+      when(
+        () => service.invokeMethod(any()),
+      ).thenAnswer((_) async => const CoreMethodResponse(result: true));
+
+      final pending = core.invokeMethod<bool>(method: CoreMethod.getIsInit);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await core.startListener();
+
+      expect(await pending, isTrue);
+      verify(() => service.invokeMethod(any())).called(1);
     });
   });
 }

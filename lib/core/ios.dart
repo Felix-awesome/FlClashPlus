@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/plugins/ios_service.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
@@ -18,6 +19,7 @@ import 'spill.dart';
 ///
 /// The actual core boot (QuickSetup + StartTun) happens inside the extension's
 /// PacketTunnelProvider, not here.
+
 /// How long a core call waits for the tunnel before it is sent.
 ///
 /// On iOS "connected" means two things in sequence: the system builds the
@@ -27,6 +29,10 @@ import 'spill.dart';
 /// reported "Core did not answer setupConfig" no matter how long the extension
 /// itself was willing to wait for its core: the request was never sent at all.
 const _iosConnectionWaitDuration = Duration(seconds: 60);
+
+/// How long a call waits for the system to finish starting a session the app
+/// did not start itself, after the status still reads "not running".
+const _iosStatusProbeDuration = Duration(seconds: 2);
 
 class CoreIOS extends CoreHandlerInterface {
   static CoreIOS? _instance;
@@ -172,13 +178,14 @@ class CoreIOS extends CoreHandlerInterface {
     final embedded = diagnostics['extensionEmbedded'] == true;
     final homeDir = diagnostics['appGroupPath'] as String? ?? '';
     final boot = (await _service?.getBootLog() ?? '').trim();
+    const missingGroup =
+        'App Group 不可用：主 App 与扩展不共享数据目录，因此扩展的启动日志也读不到。'
+        '重签时描述文件缺少 App Groups 能力会这样。';
     final lines = <String>[
       running ? 'VPN 隧道：已连接' : 'VPN 隧道：未连接',
       'App Group 共享目录：${appGroup ? '可用（$homeDir）' : '不可用'}',
       '隧道扩展 FlClashService.appex：${embedded ? '已打包' : '未打包'}',
-      if (!appGroup)
-        'App Group 不可用：主 App 与扩展不共享数据目录，因此扩展的启动日志'
-            '也读不到。重签时描述文件缺少 App Groups 能力会这样。',
+      if (!appGroup) missingGroup,
       if (!embedded) '安装包里没有扩展，系统不会启动它，任何核心调用都不可能有人回应。',
       if (boot.isEmpty && embedded) '扩展没有写入启动日志：它没有执行到 startTunnel，或被系统在启动时拒绝。',
       if (boot.isNotEmpty) '扩展启动日志（最新在最后）：',
@@ -212,13 +219,7 @@ class CoreIOS extends CoreHandlerInterface {
     required CoreMethod method,
     Object? arguments,
   }) async {
-    try {
-      await _connectedCompleter.future.timeout(_iosConnectionWaitDuration);
-    } catch (error) {
-      commonPrint.log(
-        'Invoke method ${method.name} before connection timed out: $error',
-        logLevel: coreFailureLogLevel(error),
-      );
+    if (!await _waitForConnection(method)) {
       return null;
     }
     final id = '${++_methodCallId}';
@@ -229,6 +230,63 @@ class CoreIOS extends CoreHandlerInterface {
       return null;
     }
     return response.unwrap<T>();
+  }
+
+  /// Whether a core call should be sent now.
+  ///
+  /// "Not connected" has two very different causes on iOS, and only one of
+  /// them is worth waiting out:
+  ///
+  /// - A tunnel exists and its extension is still booting the core -- the
+  ///   system restarted it, or on-demand brought it back. That boot compiles
+  ///   the whole rule set on a first launch, so the wait is generous.
+  /// - No tunnel exists. Nothing is booting, so the call would be answered by
+  ///   nobody however long it waited; answering it now keeps the caller's own
+  ///   fallback (an unvalidated profile, a skipped query) from arriving a
+  ///   minute late, which from the outside is indistinguishable from a hang.
+  Future<bool> _waitForConnection(CoreMethod method) async {
+    // Nothing to wait for: this is the path every call takes while the tunnel
+    // is up, so it must not cost a channel round trip.
+    if (_connectedCompleter.isCompleted) {
+      return true;
+    }
+    if (!await (_service?.getStatus() ?? false)) {
+      // A tunnel the app did not start itself has no completer anyone is
+      // waiting on yet. The status can also read "disconnected" for a moment
+      // while the system finishes starting a session, so one short probe
+      // covers that without turning every call made with the VPN off into a
+      // stall.
+      if (await _awaitConnected(_iosStatusProbeDuration)) {
+        return true;
+      }
+      commonPrint.log(
+        'Invoke method ${method.name} skipped: no tunnel is running',
+        logLevel: LogLevel.warning,
+      );
+      return false;
+    }
+    if (await _awaitConnected(_iosConnectionWaitDuration)) {
+      return true;
+    }
+    commonPrint.log(
+      'Invoke method ${method.name} timed out waiting for the tunnel',
+      logLevel: LogLevel.warning,
+    );
+    return false;
+  }
+
+  /// Waits up to [timeout] for the tunnel to report itself connected.
+  Future<bool> _awaitConnected(Duration timeout) async {
+    final completer = _connectedCompleter;
+    if (completer.isCompleted) {
+      return true;
+    }
+    try {
+      await completer.future.timeout(timeout);
+      return true;
+    } on TimeoutException {
+      return false;
+    }
   }
 }
 
