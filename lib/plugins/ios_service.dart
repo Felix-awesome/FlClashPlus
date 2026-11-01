@@ -35,12 +35,12 @@ Future<Map<String, Object?>> _decodeResponse(
 const _channelRetryAttempts = 5;
 const _channelRetryDelay = Duration(milliseconds: 100);
 
-/// A core call the extension relays answers with nothing when its own core has
-/// not finished starting, which the app would surface as "Core did not
-/// answer <method>". The extension already waits for setup before replying, so
-/// an empty answer usually means the tunnel was still coming up: one more
-/// attempt covers that without tripling the worst-case latency.
-const _emptyReplyAttempts = 2;
+/// A core call the extension relays answers with nothing when nobody picks it
+/// up, which the app would surface as "Core did not answer <method>". The native
+/// side already waits for its own answer (25s for a live tunnel, longer while a
+/// core boots), so a second attempt would only double a wait that has already
+/// been given its full budget.
+const _emptyReplyAttempts = 1;
 const _emptyReplyDelay = Duration(milliseconds: 300);
 
 /// How many times a transport error from `sendProviderMessage` is retried.

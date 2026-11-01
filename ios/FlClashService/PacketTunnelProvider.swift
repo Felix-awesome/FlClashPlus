@@ -110,6 +110,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let core = VpnCore(homeDir: homeDir, stack: stack, address: address, dns: dns, mtu: mtu)
         vpnCore = core
 
+        // The app's calls travel over the shared container, not over
+        // `sendProviderMessage` (see CoreBridge.swift). Serving starts here,
+        // before the core is ready: a request that arrives while QuickSetup is
+        // still running waits on disk and is answered once it is.
+        CoreBridge.shared.start(homeDir: homeDir) { [weak self] message, reply in
+            self?.answer(message, reply: reply)
+        }
+
         // Answer the system now, and boot the core on another queue.
         //
         // This call is what moves the connection's status from "connecting" to
@@ -185,6 +193,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         BootLog.write("stopTunnel reason=\(reason.rawValue)")
         stopping = true
+        CoreBridge.shared.stop()
         vpnCore?.stop()
         vpnCore = nil
         completionHandler()
@@ -195,57 +204,66 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             completionHandler?(nil)
             return
         }
-        // The app calls in as soon as the tunnel reports itself up, but the core
-        // is only built after setTunnelNetworkSettings completes and QuickSetup
-        // returns. Reply immediately and the very first call (typically
-        // validateConfig while adding a profile) lands while vpnCore is still
-        // nil, which the app shows as "Core did not answer validateConfig".
-        // Waiting here turns that race into a slow call instead of a failed one.
-        //
-        // The wait is generous because a first init compiles the whole rule set;
-        // when it still runs out, the reply carries the reason instead of being
-        // empty, so the app can say why rather than "did not answer".
+        // Kept because it is the documented channel and costs nothing. On the
+        // tested device nothing ever arrived through it (see CoreBridge), which
+        // is why the app sends its calls as files instead.
+        BootLog.write("app call \(CoreBridge.methodName(in: message)) over xpc")
+        answer(message) { text in
+            completionHandler?(text.data(using: .utf8))
+        }
+    }
+
+    /// Turns one core call into one reply string.
+    ///
+    /// Both transports end up here: `handleAppMessage` for the documented XPC
+    /// channel, `CoreBridge` for the App Group files the app actually uses. The
+    /// waiting rules are the same for both.
+    private func answer(_ message: String, reply: @escaping (String) -> Void) {
         let startError = lastStartError
-        let method = Self.methodName(in: message)
+        let method = CoreBridge.methodName(in: message)
         if bootFailed {
             // The core threw while booting: it will not become ready, so the
             // call is answered with the reason immediately rather than making
             // the app wait out the readiness timeout for nothing.
-            BootLog.write("app call \(method) answered at once: core boot failed")
-            completionHandler?(Self.notReadyReply(
+            BootLog.write("core call \(method) answered at once: core boot failed")
+            reply(Self.notReadyReply(
                 request: message,
                 reason: startError.isEmpty ? "核心启动失败" : startError))
             return
         }
         let started = Date()
-        BootLog.write("app call \(method) waiting for core")
-        // Two waits are stacked here and their lengths have to differ: this one
+        // The app calls in as soon as the tunnel reports itself up, but the core
+        // is only built after setTunnelNetworkSettings completes and QuickSetup
+        // returns. Waiting here turns that race into a slow call instead of a
+        // failed one.
+        //
+        // Two waits are stacked and their lengths have to differ: this one
         // covers VpnCore's own 45s wait for QuickSetup plus the StartTun that
         // follows it. Equal timeouts made the two give up in the same instant,
-        // so a slow first init always answered nil a moment before the core
+        // so a slow first init always answered nothing a moment before the core
         // went live.
         waitForCore(timeout: 75) { [weak self] core in
             guard let core = core else {
                 let setupError = self?.vpnCore?.lastError ?? ""
                 let reason = startError.isEmpty ? setupError : startError
-                BootLog.write("app call \(method) gave up after "
+                BootLog.write("core call \(method) gave up after "
                     + String(format: "%.1fs", Date().timeIntervalSince(started))
                     + ": \(reason.isEmpty ? "core never became ready" : reason)")
-                completionHandler?(Self.notReadyReply(request: message, reason: reason))
+                reply(Self.notReadyReply(request: message, reason: reason))
                 return
             }
             BootLog.write("core ready for \(method) after "
                 + String(format: "%.1fs", Date().timeIntervalSince(started)))
             // The core answers on its own goroutine, so the reply is handed back
-            // through completionHandler. The watchdog keeps a lost answer from
-            // wedging the Dart future forever; ReplyOnce makes sure the handler
-            // still runs exactly once. It has to outlast the wait above.
-            let reply = ReplyOnce(completionHandler)
+            // through the completion. The watchdog keeps a lost answer from
+            // wedging the caller forever; ReplyOnce makes sure the reply is
+            // delivered exactly once. It has to outlast the wait above.
+            let once = ReplyOnce(reply)
             core.invoke(message) { text in
-                reply.send(text.data(using: .utf8))
+                once.send(text)
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + 120) {
-                reply.send(Self.notReadyReply(
+                once.send(Self.notReadyReply(
                     request: message,
                     reason: "核心 120 秒内没有返回结果"))
             }
@@ -292,23 +310,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    /// The `method` field of a core call, for the log. The whole call is too
-    /// large to write on every message (a config push carries the profile).
-    private static func methodName(in message: String) -> String {
-        guard let data = message.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let method = object["method"] as? String else {
-            return "unknown"
-        }
-        return method
-    }
-
     /// Builds a reply the app decodes as a core error.
     ///
     /// The Dart side reads every answer as a `MethodResponse`, so an `error`
     /// object is what turns "nothing came back" into a message the UI prints.
     /// The id is echoed from the request because the two are paired on it.
-    private static func notReadyReply(request: String, reason: String) -> Data? {
+    private static func notReadyReply(request: String, reason: String) -> String {
         var id: Any = ""
         if let data = request.data(using: .utf8),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -324,7 +331,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     + "。隧道已建立，稍等几秒再重试一次。",
             ],
         ]
-        return try? JSONSerialization.data(withJSONObject: payload)
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
     }
 
     /// Whether this extension can actually write to [path].
@@ -364,18 +375,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 }
 
 /// Delivers an extension reply exactly once. The core's answer may arrive after
-/// the watchdog has already fired, and calling a completion handler twice is a
-/// trap.
+/// the watchdog has already fired, and delivering a reply twice is a trap.
 private final class ReplyOnce {
     private let lock = NSLock()
     private var sent = false
-    private let handler: ((Data?) -> Void)?
+    private let handler: (String) -> Void
 
-    init(_ handler: ((Data?) -> Void)?) {
+    init(_ handler: @escaping (String) -> Void) {
         self.handler = handler
     }
 
-    func send(_ data: Data?) {
+    func send(_ text: String) {
         lock.lock()
         if sent {
             lock.unlock()
@@ -383,6 +393,6 @@ private final class ReplyOnce {
         }
         sent = true
         lock.unlock()
-        handler?(data)
+        handler(text)
     }
 }

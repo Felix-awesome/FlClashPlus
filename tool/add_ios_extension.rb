@@ -61,6 +61,25 @@ runner_target.build_configurations.each do |config|
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements' if File.exist?(runner_ent)
 end
 
+# --- The app-side half of the core channel ---
+# Core calls travel as files in the App Group container (see
+# ios/Runner/CoreFileRelay.swift). The Flutter template's Runner target lists its
+# sources explicitly, so a new file left out of the project would compile
+# nowhere and the app would fail to build with "cannot find 'CoreFileRelay'".
+runner_group = project.main_group.find_subpath('Runner', true)
+runner_group.path = 'Runner'
+runner_group.source_tree = '<group>'
+relay_name = 'CoreFileRelay.swift'
+relay_phase_files = runner_target.source_build_phase.files.map { |f| f.file_ref&.path }
+unless relay_phase_files.include?(relay_name)
+  relay_path = File.join(ios_dir, 'Runner', relay_name)
+  abort "missing source: #{relay_path}" unless File.exist?(relay_path)
+  relay_ref = runner_group.files.find { |f| f.path == relay_name } ||
+              runner_group.new_file(relay_name)
+  runner_target.source_build_phase.add_file_reference(relay_ref)
+  puts "Added #{relay_name} to the Runner target"
+end
+
 # --- Build the FlClashService extension target (if not already present) ---
 ext_name = 'FlClashService'
 if (existing_ext = project.targets.find { |t| t.name == ext_name })
@@ -108,7 +127,7 @@ src_group = project.main_group.find_subpath('FlClashService', true)
 src_group.path = 'FlClashService'
 src_group.source_tree = '<group>'
 
-%w[PacketTunnelProvider.swift VpnCore.swift BootLog.swift].each do |name|
+%w[PacketTunnelProvider.swift VpnCore.swift BootLog.swift CoreBridge.swift].each do |name|
   path = File.join(ios_dir, 'FlClashService', name)
   abort "missing source: #{path}" unless File.exist?(path)
   ref = src_group.new_file(name)

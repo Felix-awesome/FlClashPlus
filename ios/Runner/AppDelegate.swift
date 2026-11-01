@@ -721,76 +721,34 @@ extension AppDelegate {
 
     /// Relays a JSON core method call (e.g. "getConfig", "changeProxy") to the
     /// Go core inside the tunnel extension and returns its raw JSON reply.
+    ///
+    /// The call travels as a file in the App Group container, not through
+    /// `sendProviderMessage`. That API never delivered a single message on the
+    /// tested device: every reply came back empty within milliseconds and the
+    /// extension logged no call at all (see CoreFileRelay for the details).
     func handleCore(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard call.method == "invokeMethod" else {
             result(FlutterMethodNotImplemented)
             return
         }
-        guard let payload = call.arguments as? String,
-              let data = payload.data(using: .utf8) else {
+        guard let payload = call.arguments as? String else {
             result(FlutterError(code: "bad_arguments",
                 message: "expected a JSON string", details: nil))
             return
         }
-        sendThroughTunnel(data, result: result)
-    }
-
-    private func sendThroughTunnel(_ data: Data, result: @escaping FlutterResult) {
-        if let session = cachedManager?.connection as? NETunnelProviderSession {
-            relay(data, over: session, result: result)
+        guard let home = Self.groupHomeDir() else {
+            // Without the shared container there is no channel to the extension
+            // and nothing the app writes could ever be read: answering at once
+            // keeps the caller's own fallback from arriving a minute late.
+            Self.log("core call dropped: the App Group container is unavailable")
+            result(nil)
             return
         }
-        // The cache is empty on a cold start and after a process relaunch, so
-        // fall back to the saved configuration before giving up.
-        loadTunnelManager(createIfMissing: false) { manager, error in
-            if let error = error {
-                result(Self.describe(error))
-                return
-            }
-            guard let manager = manager,
-                  let session = manager.connection as? NETunnelProviderSession else {
-                result(FlutterError(code: "no_session",
-                    message: "the tunnel is not configured or not running", details: nil))
-                return
-            }
-            self.remember(manager)
-            self.relay(data, over: session, result: result)
-        }
-    }
-
-    private func relay(
-        _ data: Data,
-        over session: NETunnelProviderSession,
-        result: @escaping FlutterResult,
-        attempt: Int = 0
-    ) {
-        do {
-            try session.sendProviderMessage(data) { response in
-                // The reply arrives on a background queue; FlutterResult must
-                // be invoked on the main thread.
-                DispatchQueue.main.async {
-                    if let response = response {
-                        result(FlutterStandardTypedData(bytes: response))
-                    } else {
-                        result(nil)
-                    }
-                }
-            }
-        } catch {
-            // sendProviderMessage refuses to enqueue anything until the tunnel
-            // is up, and the app issues its first core call right after
-            // start(), so the very first attempt races the handshake. The Dart
-            // side only retries for a few hundred milliseconds, which cannot
-            // cover a multi-second tunnel setup, so wait here instead.
-            let stillStarting = session.status == .connecting || session.status == .reasserting
-            if attempt < 24 && stillStarting {
-                DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
-                    self.relay(data, over: session, result: result, attempt: attempt + 1)
-                }
-                return
-            }
-            result(FlutterError(code: "send_failed",
-                message: error.localizedDescription, details: nil))
-        }
+        CoreFileRelay.shared.send(
+            payload,
+            directory: URL(fileURLWithPath: home)
+                .appendingPathComponent("ipc", isDirectory: true),
+            result: result
+        )
     }
 }
