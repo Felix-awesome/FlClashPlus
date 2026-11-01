@@ -192,9 +192,30 @@ class NetworkTakeoverTile extends StatelessWidget {
   }
 }
 
-void _setVpn(WidgetRef ref, bool value) => ref
-    .read(vpnSettingProvider.notifier)
-    .update((state) => state.copyWith(enable: value));
+/// The VPN switch in the grid's control row, in place of the takeover tiles.
+///
+/// On iOS the switch has no VPN-service setting to flip: the tunnel is owned by
+/// NetworkExtension, so "on" has to mean "the tunnel is up". Binding the switch
+/// to the run state and toggling the core keeps it working instead of silently
+/// editing an Android-only `enable` flag that nothing on iOS ever reads.
+void _setVpn(WidgetRef ref, bool value) {
+  if (system.isIOS) {
+    final running = ref.read(isStartProvider);
+    if (running != value) {
+      ref.read(commonActionProvider.notifier).toggleRunning();
+    }
+    return;
+  }
+  ref
+      .read(vpnSettingProvider.notifier)
+      .update((state) => state.copyWith(enable: value));
+}
+
+/// What the VPN switch reports as "on". Android reads its own `enable` flag;
+/// iOS reports whether the tunnel is actually running.
+bool _vpnEnabled(WidgetRef ref) => system.isIOS
+    ? ref.watch(isStartProvider)
+    : ref.watch(vpnSettingProvider.select((state) => state.enable));
 
 /// The VPN switch in the grid's control row, in place of the takeover tiles.
 class VpnTile extends ConsumerWidget {
@@ -204,9 +225,7 @@ class VpnTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
     final metrics = _tileMetricsOf(DashboardDensityScope.of(context));
-    final enabled = ref.watch(
-      vpnSettingProvider.select((state) => state.enable),
-    );
+    final enabled = _vpnEnabled(ref);
     return DashboardCard(
       padding: EdgeInsets.zero,
       child: DashboardSwitchRow(
@@ -239,9 +258,7 @@ class VpnCard extends ConsumerWidget {
     final appLocalizations = context.appLocalizations;
     final colorScheme = context.colorScheme;
     final colors = DashboardColors.of(context);
-    final enabled = ref.watch(
-      vpnSettingProvider.select((state) => state.enable),
-    );
+    final enabled = _vpnEnabled(ref);
     void change(bool value) => _setVpn(ref, value);
     return DashboardCard(
       semanticLabel: 'VPN',

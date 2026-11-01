@@ -193,6 +193,14 @@ class SetupAction extends _$SetupAction {
     if (request.initialize) {
       var applied = false;
       try {
+        // On iOS the core only exists once the tunnel is up, and applyProfile
+        // reads the profile through the core (getProfileBase). Starting the
+        // tunnel first is what gives that read a core to answer it; on other
+        // platforms the core process is already running by the time _start is
+        // reached, so this is a no-op there.
+        if (system.isIOS) {
+          await _startCoreRunning(request);
+        }
         applied = await applyProfile(
           force: !request.resume,
           preloadInvoke: () => _startCoreRunning(request),
