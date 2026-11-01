@@ -97,6 +97,18 @@ import NetworkExtension
         return String(decoding: slice, as: UTF8.self)
     }
 
+    /// The whole startup log, for the "export extension log" action. The tail
+    /// above is sized for an inline error message; a file meant to be handed to
+    /// someone for diagnosis wants the full history instead of its last 6 KB.
+    static func fullBootLog() -> String {
+        guard let home = groupHomeDir() else { return "" }
+        let path = (home as NSString).appendingPathComponent("boot.log")
+        guard let data = FileManager.default.contents(atPath: path) else {
+            return ""
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     // MARK: - App-side log
 
     private static let logQueue = DispatchQueue(label: "com.follow.clash.applog")
@@ -270,6 +282,8 @@ import NetworkExtension
             result(Self.groupHomeDir())
         case "getBootLog":
             result(Self.bootLogTail())
+        case "getFullBootLog":
+            result(Self.fullBootLog())
         case "getDiagnostics":
             // Signing-related facts a sideloaded build can get wrong, in one
             // reply, so a failure can be explained instead of guessed at.

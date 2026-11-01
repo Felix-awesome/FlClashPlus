@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/plugins/ios_service.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/views/config/on_demand.dart';
 import 'package:fl_clash/views/config/override.dart';
@@ -371,7 +374,7 @@ class GeneralView extends ConsumerWidget {
     ];
   }
 
-  List<Widget> _logItems() {
+  List<Widget> _logItems(BuildContext context) {
     return [
       const LogLevelItem(),
       _appSettingToggle(
@@ -379,7 +382,27 @@ class GeneralView extends ConsumerWidget {
         select: (state) => state.openLogs,
         update: (state, value) => state.copyWith(openLogs: value),
       ),
+      if (system.isIOS)
+        ListItem(
+          title: Text('导出扩展日志'),
+          onTap: () => _exportExtensionLog(context),
+        ),
     ];
+  }
+
+  Future<void> _exportExtensionLog(BuildContext context) async {
+    final log = (await iosService?.getFullBootLog() ?? '').trim();
+    if (!context.mounted) return;
+    if (log.isEmpty) {
+      context.showNotifier('扩展暂无启动日志');
+      return;
+    }
+    final uri = await picker.saveFile(
+      'flclash_extension_boot.log',
+      utf8.encode(log),
+    );
+    if (!context.mounted) return;
+    context.showNotifier(uri != null ? '扩展日志已导出' : '导出已取消');
   }
 
   @override
@@ -438,7 +461,7 @@ class GeneralView extends ConsumerWidget {
           ),
           generateSection(
             title: appLocalizations.logsAndDiagnostics,
-            items: _logItems(),
+            items: _logItems(context),
             footer: appLocalizations.logcatDesc,
           ),
         ],

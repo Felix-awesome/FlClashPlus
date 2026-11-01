@@ -210,6 +210,20 @@ class IOSService {
     }
   }
 
+  /// The entire startup log, for the "export extension log" action. Unlike
+  /// [getBootLog], which returns a tail sized for an inline error message, this
+  /// hands back the full file so it can be saved and shared for diagnosis.
+  Future<String> getFullBootLog() async {
+    try {
+      return await _call(
+            () => vpnChannel.invokeMethod<String>('getFullBootLog'),
+          ) ??
+          '';
+    } catch (_) {
+      return '';
+    }
+  }
+
   /// Signing facts the containing app can check on its own, without asking the
   /// extension: whether the App Group container exists and whether the tunnel
   /// extension was embedded in the bundle at all.

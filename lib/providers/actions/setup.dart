@@ -436,12 +436,60 @@ class SetupAction extends _$SetupAction {
     bool force = false,
     Future<void> Function()? preloadInvoke,
   }) async {
+    // On iOS the core only exists inside the tunnel extension, so a profile
+    // switch that goes through applyProfile (and not through _start) needs the
+    // tunnel to be up before getProfileBase can read anything. The system can
+    // reap the extension -- leaving isStartProvider true (the switch still
+    // shows "on") while every core call is skipped as "no tunnel is running" --
+    // and nothing in the applyProfile path brings it back. When the user
+    // expects the proxy to be running but the tunnel is actually gone, start it
+    // again first so the profile builds against a live core instead of failing
+    // silently as an empty result.
+    if (system.isIOS) {
+      await _ensureTunnelAliveIfExpected();
+    }
     final result = await _runSetup(
       force: force,
       silence: silence,
       preloadInvoke: preloadInvoke,
     );
     return result != _SetupTaskResult.failed;
+  }
+
+  /// Starts the tunnel again when the running state says it should be up but
+  /// iOS reports it is gone.
+  ///
+  /// [isStartProvider] is driven by the run time (set when a start succeeds),
+  /// so it can stay true after the system silently reaped the extension. The
+  /// AppDelegate's getStatus reports a reaped provider as stopped (its alive
+  /// heartbeat has gone stale), so the two disagreeing is exactly "the tunnel
+  /// the user believes in is dead". Starting it again here reuses the normal
+  /// start path -- which saves the config and waits for the tunnel to come up
+  /// -- and never re-enters applyProfile, so there is no recursion.
+  Future<void> _ensureTunnelAliveIfExpected() async {
+    if (!ref.read(isStartProvider)) {
+      return;
+    }
+    final running = await iosService?.getStatus() ?? false;
+    if (running) {
+      return;
+    }
+    commonPrint.log(
+      'The tunnel is reported down while the run state is on; restarting it',
+      logLevel: LogLevel.warning,
+    );
+    // A restart that fails must not take the whole profile switch down with
+    // it: the profile build that follows reports its own error (an empty
+    // result from a core that is still not answering), which names the cause
+    // more precisely than an exception thrown here.
+    try {
+      await setRunning(true, initialize: false);
+    } catch (error) {
+      commonPrint.log(
+        'Restarting the tunnel for the profile switch failed: $error',
+        logLevel: LogLevel.warning,
+      );
+    }
   }
 
   Future<_SetupTaskResult> _runSetup({
