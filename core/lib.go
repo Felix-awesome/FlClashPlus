@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,17 +130,26 @@ var (
 
 func installHooks() {
 	installHooksOnce.Do(func() {
-		dialer.DefaultSocketHook = func(network, address string, conn syscall.RawConn) error {
-			if platform.ShouldBlockConnection() {
-				return errBlocked
+		// Android protects each socket through this hook: VpnService.protect
+		// exempts it from the VPN routes, which is the only way off the tunnel
+		// there. iOS has no such call -- Protect is a no-op in mobile_ios.go --
+		// and the hook is actively harmful on it: mihomo short-circuits on a
+		// non-nil DefaultSocketHook and skips the physical-interface bind it
+		// would otherwise do (see dialContext). Binding is the only way off the
+		// tunnel on iOS, so the hook must not be installed there.
+		if runtime.GOOS != "ios" {
+			dialer.DefaultSocketHook = func(network, address string, conn syscall.RawConn) error {
+				if platform.ShouldBlockConnection() {
+					return errBlocked
+				}
+				th := activeTunHandler.Load()
+				if th == nil {
+					return nil
+				}
+				return conn.Control(func(fd uintptr) {
+					th.handleProtect(int(fd))
+				})
 			}
-			th := activeTunHandler.Load()
-			if th == nil {
-				return nil
-			}
-			return conn.Control(func(fd uintptr) {
-				th.handleProtect(int(fd))
-			})
 		}
 		process.DefaultPackageNameResolver = func(metadata *constant.Metadata) (string, error) {
 			th := activeTunHandler.Load()
@@ -203,6 +214,8 @@ func handleStartTun(callbacks TunCallbacks, fd int, stack, address, dns, options
 		callbacks: callbacks,
 	}
 	if tunHandler.start(fd, stack, address, dns, options) {
+		bootLog("tun live (stack=%s address=%s dns=%s)", stack, address, dns)
+		logOutboundInterface()
 		return true
 	}
 	// start() already cleared the handler, so nothing protects sockets from
@@ -210,6 +223,27 @@ func handleStartTun(callbacks TunCallbacks, fd int, stack, address, dns, options
 	// the VPN down rather than leave the device pointed at a black hole.
 	tunHandler = nil
 	return false
+}
+
+// logOutboundInterface records where the core's own sockets will leave from.
+//
+// This is the whole game on iOS: the tunnel owns the route table, so an
+// outbound socket that is not bound to the physical NIC goes straight back
+// into the tunnel, and the app reports it as having no network at all with the
+// tunnel up. Recording the outcome turns that into one line in the exported
+// log instead of another round of guesswork.
+func logOutboundInterface() {
+	if name := dialer.DefaultInterface.Load(); name != "" {
+		bootLog("outbound interface: %s (set by the config)", name)
+		return
+	}
+	finder := dialer.DefaultInterfaceFinder.Load()
+	if finder == nil {
+		bootLog("outbound interface: unbound, no finder registered (sockets take the default route)")
+		return
+	}
+	name := finder.FindInterfaceName(netip.MustParseAddr("1.1.1.1"))
+	bootLog("outbound interface: %q", name)
 }
 
 var (

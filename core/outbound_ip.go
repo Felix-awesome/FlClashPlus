@@ -127,7 +127,21 @@ func probeOutboundIpSource(ctx context.Context, url string, proxyName string, ti
 		maxBody:   outboundIpMaxBody,
 		recorder:  hits,
 	})
-	if result == nil || result.Error != "" || result.StatusCode != http.StatusOK || !mentionsIp(result.Body) {
+	// Each branch is recorded in the extension log: "the app cannot reach the
+	// internet" and "the core's own outbound is broken" look identical from the
+	// app, and only the reason tells them apart.
+	switch {
+	case result == nil:
+		bootLog("outbound ip %s: no probe slot before the deadline", url)
+		return nil
+	case result.Error != "":
+		bootLog("outbound ip %s failed: %s (%s)", url, result.Error, result.Message)
+		return nil
+	case result.StatusCode != http.StatusOK:
+		bootLog("outbound ip %s: HTTP %d", url, result.StatusCode)
+		return nil
+	case !mentionsIp(result.Body):
+		bootLog("outbound ip %s: no public address in the answer", url)
 		return nil
 	}
 	return &OutboundIpResult{

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/netip"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -82,13 +83,20 @@ func Start(fd int, stack, address, dns, rawOptions string) *sing_tun.Listener {
 	}
 	defer func() { _ = syscall.Close(fd) }()
 
+	// AutoDetectInterface is on for iOS only. iOS has no protect(fd) to exempt
+	// a socket from the tunnel, so every outbound socket has to be bound to the
+	// physical NIC instead, or the tunnel's /1 routes send it straight back
+	// into it. That bind only happens when a default-interface finder is
+	// registered, and the finder is only created for auto-detect-interface.
+	// Android keeps it off: its socket hook protects the socket, and a hook
+	// makes mihomo skip the bind anyway.
 	options := LC.Tun{
 		Enable:               true,
 		Device:               "FlClash",
 		Stack:                tunStack,
 		DNSHijack:            dnsHijack,
 		AutoRoute:            false,
-		AutoDetectInterface:  false,
+		AutoDetectInterface:  runtime.GOOS == "ios",
 		Inet4Address:         prefix4,
 		Inet6Address:         prefix6,
 		MTU:                  settings.MTU,
