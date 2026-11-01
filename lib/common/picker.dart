@@ -17,10 +17,12 @@ class Picker {
       initialDirectory: await appPath.downloadDirPath,
       bytes: bytes,
     );
-    if (!system.isAndroid && uri != null && uri.scheme == 'file') {
-      final file = File(uri.toFilePath());
-      await file.safeWriteAsBytes(bytes);
-    }
+    // `FilePicker.saveFile` already writes `bytes` to the location the user
+    // picked, on every platform. Writing again from `uri.toFilePath()` is
+    // wrong on iOS: the picker returns a security-scoped URL there, and a
+    // plain `File.writeAsBytes` against it fails with
+    // `Operation not permitted`, which made the "export extension log" (and
+    // every other export through this helper) report success then throw.
     return uri;
   }
 
