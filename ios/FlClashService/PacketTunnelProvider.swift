@@ -201,6 +201,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         let dnsSettings = NEDNSSettings(servers: [dns])
         dnsSettings.matchDomains = [""]
+        // Match every lookup, including bare hostnames and names without a
+        // dot, and keep the system from appending its search domains. Without
+        // this the core's fake-IP resolver misses the names the system treats
+        // as local, and those lookups go straight to the device's real DNS
+        // instead of through the tunnel.
+        if #available(iOS 14.0, *) {
+            dnsSettings.matchDomainsNoSearch = true
+        }
         settings.dnsSettings = dnsSettings
 
         settings.mtu = NSNumber(value: mtu)

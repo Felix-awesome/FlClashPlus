@@ -83,8 +83,11 @@ run "flutter create" $FLUTTER_CMD create --platforms=ios --org com.follow --proj
 for f in \
   "Runner/AppDelegate.swift" \
   "Runner/Runner.entitlements" \
+  "Runner/CoreFileRelay.swift" \
   "FlClashService/PacketTunnelProvider.swift" \
   "FlClashService/VpnCore.swift" \
+  "FlClashService/BootLog.swift" \
+  "FlClashService/CoreBridge.swift" \
   "FlClashService/Info.plist" \
   "FlClashService/FlClashService.entitlements"
 do
