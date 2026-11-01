@@ -87,6 +87,15 @@ void main() {
         'nameserver': ['1.1.1.1'],
         'ipv6': true,
         'fallback-filter': {'geoip': true},
+        'direct-nameserver': ['223.5.5.5', '119.29.29.29', '8.8.8.8', '1.1.1.1'],
+        'proxy-server-nameserver': [
+          '223.5.5.5',
+          '119.29.29.29',
+          '8.8.8.8',
+          '1.1.1.1',
+          'tls://8.8.4.4',
+          'tls://1.1.1.1',
+        ],
       });
     },
   );

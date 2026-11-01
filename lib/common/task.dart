@@ -302,11 +302,18 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
   // "dns resolve failed: couldn't find ip" or a bare EOF). clashmi ships real
   // upstreams here by default; fill them in when the config left them blank.
   const fallbackDirectNs = ['223.5.5.5', '119.29.29.29', '8.8.8.8', '1.1.1.1'];
+  // Proxy-server hostnames point at airport nodes outside the wall; mix in
+  // DoT so a polluted plaintext answer does not send every node to a bogus IP.
+  const fallbackProxyNs = [
+    ...fallbackDirectNs,
+    'tls://8.8.4.4',
+    'tls://1.1.1.1',
+  ];
   if ((rawDns['direct-nameserver'] as List?)?.isEmpty ?? true) {
     rawDns['direct-nameserver'] = List<String>.from(fallbackDirectNs);
   }
   if ((rawDns['proxy-server-nameserver'] as List?)?.isEmpty ?? true) {
-    rawDns['proxy-server-nameserver'] = List<String>.from(fallbackDirectNs);
+    rawDns['proxy-server-nameserver'] = List<String>.from(fallbackProxyNs);
   }
   final ntpOverride = overrides.ntp.overrideJson(overrides.ntpOverrideKeys);
   if (ntpOverride.isNotEmpty) {
