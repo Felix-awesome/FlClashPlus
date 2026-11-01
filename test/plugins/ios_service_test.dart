@@ -52,22 +52,29 @@ void main() {
       expect(calls.single.method, 'getStatus');
     });
 
-    test('a connected tunnel whose provider is dead reads as stopped', () async {
-      mockVpnChannel((_) async => {
+    test(
+      'a connected tunnel whose provider is dead reads as stopped',
+      () async {
+        mockVpnChannel(
+          (_) async => {
             'running': true,
             'connected': true,
             'providerAlive': false,
-          });
+          },
+        );
 
-      expect(await IOSService().getStatus(), isFalse);
-    });
+        expect(await IOSService().getStatus(), isFalse);
+      },
+    );
 
     test('a connected tunnel with a live provider reads as running', () async {
-      mockVpnChannel((_) async => {
-            'running': true,
-            'connected': true,
-            'providerAlive': true,
-          });
+      mockVpnChannel(
+        (_) async => {
+          'running': true,
+          'connected': true,
+          'providerAlive': true,
+        },
+      );
 
       expect(await IOSService().getStatus(), isTrue);
     });
