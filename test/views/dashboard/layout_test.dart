@@ -466,4 +466,35 @@ void main() {
 
     await teardown(tester);
   });
+
+  test('every platform the app runs on has cards it can show', () {
+    // The dashboard is built from `SupportPlatform.currentPlatform`, and iOS was
+    // missing from that enum: the getter threw, the whole page failed to build
+    // and the tab was blank.
+    for (final platform in SupportPlatform.values) {
+      final cards = platformDefaultDashboardWidgets.where(
+        (widget) => widget.platforms.contains(platform),
+      );
+      expect(cards, isNotEmpty, reason: platform.name);
+    }
+  });
+
+  testWidgets('a phone on iOS shows the cards it supports', (tester) async {
+    await pumpDashboard(
+      tester,
+      const Size(412, 915),
+      platform: SupportPlatform.iOS,
+    );
+
+    expect(find.byType(CurrentOutboundCard), findsOneWidget);
+    expect(find.byType(ProfilesCard), findsOneWidget);
+    expect(find.byType(ProxyGroupsCard), findsOneWidget);
+    // The VPN card flips the Android VPN service setting, which iOS has no
+    // equivalent of: the start button on the current outbound card is what
+    // starts the tunnel there.
+    expect(find.byType(VpnCard), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await teardown(tester);
+  });
 }
