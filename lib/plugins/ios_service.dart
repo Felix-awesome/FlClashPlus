@@ -128,13 +128,29 @@ class IOSService {
     coreChannel = const MethodChannel(_coreChannelName);
   }
 
-  /// Whether the VPN tunnel is currently connected or connecting.
+  /// Whether the VPN tunnel is currently connected *and* its provider process
+  /// is still alive.
+  ///
+  /// The AppDelegate reports `running` (the tunnel looks up to NetworkExtension)
+  /// separately from `providerAlive` (the extension's heartbeat file is fresh).
+  /// On iOS 15.7 the system can reap the extension -- taking the Go core with
+  /// it -- while `status` stays "connected", so a tunnel that is "running" but
+  /// not alive must read as stopped here: the caller's only sane response is to
+  /// start it again, and answering `true` would make it answer "already up".
   Future<bool> getStatus() async {
     try {
       final status = await _call(
         () => vpnChannel.invokeMapMethod<String, Object?>('getStatus'),
       );
-      return status?['running'] as bool? ?? false;
+      final running = status?['running'] as bool? ?? false;
+      final connected = status?['connected'] as bool? ?? false;
+      final alive = status?['providerAlive'] as bool? ?? false;
+      // When the tunnel is connecting there is no live core yet, so only a
+      // connected-but-dead provider is treated as stopped.
+      if (connected && !alive) {
+        return false;
+      }
+      return running;
     } catch (_) {
       return false;
     }

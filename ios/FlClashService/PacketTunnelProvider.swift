@@ -11,6 +11,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private var vpnCore: VpnCore?
 
+    /// Refreshes the App Group "alive" file while the core is up, so the app
+    /// can tell a live provider (recent mtime) from one the system silently
+    /// reaped (stale mtime) even though NEVPNManager still says "connected".
+    private var heartbeat: DispatchSourceTimer?
+
     /// Why the last startTunnel attempt failed, if it did. Kept so a core call
     /// that arrives afterwards can be answered with the real reason instead of
     /// an empty reply -- on a device there is no console to read it from.
@@ -78,6 +83,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 + "its config with this directory.")
         }
         BootLog.write("home dir: \(homeDir)")
+        // Start the liveness signal as soon as this process is known to be up,
+        // not after the core finishes booting: the app reads it to tell a live
+        // provider from a reaped one, and the window between "connected" and
+        // "tun live" must still count as alive.
+        startHeartbeat(homeDir: homeDir)
 
         let stack = providerConfig["stack"] as? String ?? "gvisor"
         let address = providerConfig["address"] as? String ?? "198.18.0.1/30"
@@ -190,13 +200,44 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         return settings
     }
 
+    /// Writes the current time into the shared "alive" file on a short period,
+    /// so the app can see a provider that is still running. The file's mtime is
+    /// the signal (its contents are empty), which keeps this from growing the
+    /// boot.log and from needing a read-modify-write on a hot path.
+    private func startHeartbeat(homeDir: String) {
+        let url = URL(fileURLWithPath: homeDir)
+            .appendingPathComponent("alive.txt")
+        // Seed it now so the very first start() already sees a live provider.
+        _ = FileManager.default.createFile(atPath: url.path, contents: Data())
+        let timer = DispatchSource.makeTimerSource(
+            queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 5, repeating: 5)
+        timer.setEventHandler {
+            // Touch the file; createFile updates mtime even when it exists.
+            _ = FileManager.default.createFile(atPath: url.path, contents: Data())
+        }
+        timer.resume()
+        heartbeat = timer
+    }
+
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         BootLog.write("stopTunnel reason=\(reason.rawValue)")
         stopping = true
         CoreBridge.shared.stop()
+        heartbeat?.cancel()
+        heartbeat = nil
         vpnCore?.stop()
         vpnCore = nil
         completionHandler()
+        // The provider process must not outlive its tunnel. Without this, a
+        // `stopTunnel reason=9` (the system removed the configuration) leaves
+        // the process running with a dead core: NEVPNManager keeps reporting
+        // "connected", the app's start() trusts that and never restarts, and
+        // every core call then fails as unanswered. clashmi calls
+        // `exit(EXIT_FAILURE)` here for exactly this reason, so the system is
+        // forced to tear the whole provider down and the next start boots a
+        // fresh one.
+        exit(EXIT_FAILURE)
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {

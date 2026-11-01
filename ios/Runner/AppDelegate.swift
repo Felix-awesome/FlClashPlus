@@ -434,21 +434,51 @@ import NetworkExtension
         loadTunnelManager(createIfMissing: false) { manager, _ in
             // A missing configuration is not an error: it just is not running.
             guard let manager = manager else {
-                result(["connected": false, "connecting": false, "running": false])
+                result(["connected": false, "connecting": false, "running": false, "providerAlive": false])
                 return
             }
             let status = manager.connection.status
             let connected = status == .connected
             let connecting = status == .connecting || status == .reasserting
+            // "running" means the tunnel looks up to NetworkExtension; it does
+            // not mean the provider process (and the Go core inside it) is
+            // still there. On iOS 15.7 the system can reap the extension
+            // without moving the status off "connected", so a caller that only
+            // reads "running" would trust a tunnel whose core is gone. The
+            // provider's heartbeat file is the ground truth, so it is reported
+            // separately and the Dart side can act on it.
+            let alive = connected && Self.providerIsAlive()
             result([
                 "connected": connected,
                 "connecting": connecting,
                 "running": connected || connecting,
+                "providerAlive": alive,
             ])
         }
     }
 
     // MARK: - Start / Stop
+
+    /// Whether the provider process is still alive, judged by the mtime of the
+    /// "alive" file it refreshes every few seconds while its core is up.
+    ///
+    /// A provider that was reaped leaves the file frozen at its last touch, so
+    /// an mtime older than a couple of heartbeat periods is a dead process even
+    /// though `connection.status` still reads "connected". The threshold is
+    /// generous on purpose: a device under load can miss a heartbeat, but a
+    /// live provider never goes silent for this long.
+    private static let aliveGrace: TimeInterval = 15
+
+    private static func providerIsAlive() -> Bool {
+        guard let home = groupHomeDir() else { return false }
+        let url = URL(fileURLWithPath: home).appendingPathComponent("alive.txt")
+        guard let attributes = try? FileManager.default.attributesOfItem(
+            atPath: url.path),
+            let modified = attributes[.modificationDate] as? Date else {
+            return false
+        }
+        return Date().timeIntervalSince(modified) < aliveGrace
+    }
 
     private func start(_ result: @escaping FlutterResult, attempt: Int = 0) {
         loadTunnelManager(createIfMissing: false) { manager, error in
@@ -476,7 +506,34 @@ import NetworkExtension
                 // NetworkExtension throw and the app report a start failure on
                 // a tunnel that never stopped.
                 switch manager.connection.status {
-                case .connected, .connecting, .reasserting:
+                case .connected:
+                    // "connected" is what NEVPNManager reports, not what the
+                    // provider process is doing. On iOS 15.7 the system can
+                    // reap the extension (and with it the Go core) without
+                    // moving the status off "connected", so a start() that
+                    // trusted the word of the status answered "already up" for
+                    // a tunnel whose core was gone -- and every core call then
+                    // failed as unanswered with no new tunnel ever started.
+                    //
+                    // The provider refreshes alive.txt every few seconds while
+                    // the core is live, so a recent mtime is the proof a start
+                    // can actually lean on. A stale one means the process died:
+                    // tear the phantom down and start fresh.
+                    if Self.providerIsAlive() {
+                        self.remember(manager)
+                        result(true)
+                        return
+                    }
+                    Self.log("start: connected but provider not alive; restarting")
+                    manager.connection.stopVPNTunnel()
+                    // The stop above moves the status to "disconnecting" and
+                    // then "disconnected"; wait for that to settle, then start
+                    // fresh, exactly as the .disconnecting case does.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        self.start(result, attempt: attempt + 1)
+                    }
+                    return
+                case .connecting, .reasserting:
                     self.remember(manager)
                     result(true)
                     return
