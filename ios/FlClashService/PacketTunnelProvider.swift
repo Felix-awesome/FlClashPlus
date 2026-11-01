@@ -186,9 +186,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
 
         let ipv4 = NEIPv4Settings(addresses: [address], subnetMasks: [mask])
+        // Two /1 routes split the whole IPv4 space in half and, being more
+        // specific than the default /0 route, replace it: 0.0.0.0/1 covers
+        // 0.0.0.0–127.255.255.255 and 128.0.0.0/1 covers 128.0.0.0–255.255.255.255.
+        // The mask is 128.0.0.0 (a single high bit), NOT 255.255.255.254 (/31):
+        // a /31 captures two addresses, so nothing but the tunnel endpoint
+        // itself would ever be routed into the tunnel and the device would have
+        // no network while the VPN is up.
         ipv4.includedRoutes = [
-            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "255.255.255.254"),
-            NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "255.255.255.254"),
+            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "128.0.0.0"),
+            NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "128.0.0.0"),
         ]
         settings.ipv4Settings = ipv4
 
