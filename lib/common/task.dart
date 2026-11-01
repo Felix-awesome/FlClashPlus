@@ -294,6 +294,20 @@ Future<RealProfile> _makeRealProfileTask(MakeRealProfileState data) async {
     ),
   );
   rawConfig['dns'] = rawDns;
+  // mihomo resolves proxy-server and direct hostnames through the fake-IP
+  // resolver when these two lists are empty, so a DIRECT or node outbound
+  // ends up dialing a fake-IP that only the TUN's gvisor stack can map back
+  // to a real address. Inside the core's own outbound dial that mapping never
+  // happens, so every such connection dies (the app reports it as
+  // "dns resolve failed: couldn't find ip" or a bare EOF). clashmi ships real
+  // upstreams here by default; fill them in when the config left them blank.
+  const fallbackDirectNs = ['223.5.5.5', '119.29.29.29', '8.8.8.8', '1.1.1.1'];
+  if ((rawDns['direct-nameserver'] as List?)?.isEmpty ?? true) {
+    rawDns['direct-nameserver'] = List<String>.from(fallbackDirectNs);
+  }
+  if ((rawDns['proxy-server-nameserver'] as List?)?.isEmpty ?? true) {
+    rawDns['proxy-server-nameserver'] = List<String>.from(fallbackDirectNs);
+  }
   final ntpOverride = overrides.ntp.overrideJson(overrides.ntpOverrideKeys);
   if (ntpOverride.isNotEmpty) {
     final rawNtp = rawConfig['ntp'] is Map
