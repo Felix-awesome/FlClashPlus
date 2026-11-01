@@ -47,6 +47,8 @@ migrate_working_dir/
 .pub/
 /build/
 /dist/
+# Downloaded CI artifacts (IPA builds) — never commit these
+/dist-ipa/
 
 # Symbolication related
 app.*.symbols
