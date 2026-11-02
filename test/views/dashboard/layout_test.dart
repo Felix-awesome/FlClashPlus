@@ -467,6 +467,27 @@ void main() {
     await teardown(tester);
   });
 
+  testWidgets('iOS shows no VPN switch and the mode bar spans the row', (
+    tester,
+  ) async {
+    for (final size in const [Size(1280, 800), Size(915, 412)]) {
+      await pumpDashboard(tester, size, platform: SupportPlatform.iOS);
+
+      // The tunnel is the proxy on iOS, so the run toggle is the only control:
+      // no VPN tile, no takeover tiles, and the mode bar gets the full width.
+      expect(find.byType(VpnTile), findsNothing);
+      expect(find.byType(NetworkTakeoverTile), findsNothing);
+      final mode = rectOf(tester, OutboundModeBar);
+      expect(
+        mode.width,
+        greaterThan(rectOf(tester, CurrentOutboundCard).width),
+      );
+      expect(tester.takeException(), isNull);
+    }
+
+    await teardown(tester);
+  });
+
   test('every platform the app runs on has cards it can show', () {
     // The dashboard is built from `SupportPlatform.currentPlatform`, and iOS was
     // missing from that enum: the getter threw, the whole page failed to build

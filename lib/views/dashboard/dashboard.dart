@@ -161,12 +161,17 @@ class _DesktopDashboard extends StatelessWidget {
         );
         Widget sized(double height, Widget child) =>
             SizedBox(height: height, child: child);
+        // iOS has no VPN switch to offer: the tunnel is the proxy, and its run
+        // toggle already sits on the current-outbound card. Leaving the row
+        // empty hands the width to the outbound mode bar instead.
         final switches =
             DashboardWidget.networkTakeover.platforms.contains(platform)
             ? const [
                 (1, NetworkTakeoverTile(TakeoverSwitch.systemProxy)),
                 (1, NetworkTakeoverTile(TakeoverSwitch.tun)),
               ]
+            : platform == SupportPlatform.iOS
+            ? const <(int, Widget)>[]
             : const [(2, VpnTile())];
         final half = columns ~/ 2;
         final summaries = row([
@@ -195,7 +200,7 @@ class _DesktopDashboard extends StatelessWidget {
                   controlHeight,
                   const RepaintBoundary(child: OutboundModeBar()),
                 ),
-                sized(controlHeight, row(switches)),
+                if (switches.isNotEmpty) sized(controlHeight, row(switches)),
                 sized(
                   middleHeight,
                   row(const [(1, IntranetIpCard()), (1, ProfilesCard())]),
@@ -220,7 +225,10 @@ class _DesktopDashboard extends StatelessWidget {
           ),
           sized(
             controlHeight,
-            row([(2, const OutboundModeBar()), ...switches]),
+            row([
+              (switches.isEmpty ? columns : 2, const OutboundModeBar()),
+              ...switches,
+            ]),
           ),
           sized(
             middleHeight,

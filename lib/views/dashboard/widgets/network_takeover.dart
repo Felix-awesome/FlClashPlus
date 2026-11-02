@@ -194,28 +194,18 @@ class NetworkTakeoverTile extends StatelessWidget {
 
 /// The VPN switch in the grid's control row, in place of the takeover tiles.
 ///
-/// On iOS the switch has no VPN-service setting to flip: the tunnel is owned by
-/// NetworkExtension, so "on" has to mean "the tunnel is up". Binding the switch
-/// to the run state and toggling the core keeps it working instead of silently
-/// editing an Android-only `enable` flag that nothing on iOS ever reads.
+/// Android only: the flag is what its VpnService reads. iOS shows no such
+/// switch -- the tunnel belongs to NetworkExtension and starts with the run
+/// toggle -- so this never runs there.
 void _setVpn(WidgetRef ref, bool value) {
-  if (system.isIOS) {
-    final running = ref.read(isStartProvider);
-    if (running != value) {
-      ref.read(commonActionProvider.notifier).toggleRunning();
-    }
-    return;
-  }
   ref
       .read(vpnSettingProvider.notifier)
       .update((state) => state.copyWith(enable: value));
 }
 
-/// What the VPN switch reports as "on". Android reads its own `enable` flag;
-/// iOS reports whether the tunnel is actually running.
-bool _vpnEnabled(WidgetRef ref) => system.isIOS
-    ? ref.watch(isStartProvider)
-    : ref.watch(vpnSettingProvider.select((state) => state.enable));
+/// What the VPN switch reports as "on": Android's own `enable` flag.
+bool _vpnEnabled(WidgetRef ref) =>
+    ref.watch(vpnSettingProvider.select((state) => state.enable));
 
 /// The VPN switch in the grid's control row, in place of the takeover tiles.
 class VpnTile extends ConsumerWidget {
