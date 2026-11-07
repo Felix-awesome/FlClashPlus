@@ -17,6 +17,8 @@ import '../helpers/test_profiles.dart';
 void main() {
   late ProviderContainer container;
 
+  const presets = ['TestClient/1.0', 'TestClient/2.0'];
+
   String? selected() => container.read(patchClashConfigProvider).globalUa;
 
   List<String> saved() => container.read(appSettingProvider).userAgents;
@@ -26,7 +28,11 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  Future<void> pumpView(WidgetTester tester, {String? globalUa}) async {
+  Future<void> pumpView(
+    WidgetTester tester, {
+    String? globalUa,
+    List<String> userAgents = presets,
+  }) async {
     tester.view.physicalSize = const Size(1000, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -43,6 +49,9 @@ void main() {
     container
         .read(patchClashConfigProvider.notifier)
         .update((state) => state.copyWith(globalUa: globalUa));
+    container
+        .read(appSettingProvider.notifier)
+        .update((state) => state.copyWith(userAgents: userAgents));
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
@@ -59,22 +68,34 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('ships no third-party presets and only offers the default', (
+    tester,
+  ) async {
+    expect(defaultUserAgents, isEmpty);
+    await pumpView(tester, userAgents: defaultUserAgents);
+
+    expect(find.text(currentAppLocalizations.defaultText), findsOneWidget);
+    expect(find.byTooltip(currentAppLocalizations.sort), findsNothing);
+    expect(find.text('clash-verge/v2.4.2'), findsNothing);
+    expect(find.text('ClashforWindows/0.19.23'), findsNothing);
+  });
+
   testWidgets('lists the default and the presets, default without a menu', (
     tester,
   ) async {
     await pumpView(tester);
 
     expect(find.text(currentAppLocalizations.defaultText), findsOneWidget);
-    for (final userAgent in defaultUserAgents) {
+    for (final userAgent in presets) {
       expect(find.text(userAgent), findsOneWidget);
     }
     expect(
       find.byTooltip(currentAppLocalizations.edit),
-      findsNWidgets(defaultUserAgents.length),
+      findsNWidgets(presets.length),
     );
     await openMenu(tester, currentAppLocalizations.defaultText);
     expect(find.byType(CommonPopupMenu), findsNothing);
-    await openMenu(tester, defaultUserAgents.first);
+    await openMenu(tester, presets.first);
     expect(find.text(currentAppLocalizations.edit), findsOneWidget);
   });
 
@@ -85,11 +106,11 @@ void main() {
 
     await tester.tap(find.byTooltip(currentAppLocalizations.sort));
     await tester.pumpAndSettle();
-    expect(find.byType(SortHandle), findsNWidgets(defaultUserAgents.length));
+    expect(find.byType(SortHandle), findsNWidgets(presets.length));
     expect(find.byTooltip(currentAppLocalizations.add), findsNothing);
 
-    await tester.tap(find.text(defaultUserAgents.last));
-    await openMenu(tester, defaultUserAgents.last);
+    await tester.tap(find.text(presets.last));
+    await openMenu(tester, presets.last);
     expect(selected(), isNull);
     expect(find.byType(CommonPopupMenu), findsNothing);
 
@@ -106,9 +127,9 @@ void main() {
   ) async {
     await pumpView(tester);
 
-    await tester.tap(find.text(defaultUserAgents.last));
+    await tester.tap(find.text(presets.last));
     await tester.pumpAndSettle();
-    expect(selected(), defaultUserAgents.last);
+    expect(selected(), presets.last);
 
     await tester.tap(find.text(currentAppLocalizations.defaultText));
     await tester.pumpAndSettle();
@@ -122,7 +143,7 @@ void main() {
     await tester.pumpAndSettle();
     await submitInput(tester, '  CustomUA/1.0  ');
 
-    expect(saved(), [...defaultUserAgents, 'CustomUA/1.0']);
+    expect(saved(), [...presets, 'CustomUA/1.0']);
     expect(selected(), isNull);
     expect(find.text('CustomUA/1.0'), findsOneWidget);
   });
@@ -140,41 +161,41 @@ void main() {
       findsOneWidget,
     );
 
-    await submitInput(tester, defaultUserAgents.first);
+    await submitInput(tester, presets.first);
     expect(
       find.text(
         currentAppLocalizations.existsTip(currentAppLocalizations.userAgent),
       ),
       findsOneWidget,
     );
-    expect(saved(), defaultUserAgents);
+    expect(saved(), presets);
   });
 
   testWidgets('editing the selected value keeps it selected', (tester) async {
-    await pumpView(tester, globalUa: defaultUserAgents.first);
+    await pumpView(tester, globalUa: presets.first);
 
     await tester.tap(find.byTooltip(currentAppLocalizations.edit).first);
     await tester.pumpAndSettle();
-    await submitInput(tester, 'clash-verge/v3.0.0');
+    await submitInput(tester, 'TestClient/3.0');
 
-    expect(saved(), ['clash-verge/v3.0.0', defaultUserAgents.last]);
-    expect(selected(), 'clash-verge/v3.0.0');
+    expect(saved(), ['TestClient/3.0', presets.last]);
+    expect(selected(), 'TestClient/3.0');
   });
 
   testWidgets('deleting the selected value falls back to the default', (
     tester,
   ) async {
-    await pumpView(tester, globalUa: defaultUserAgents.last);
+    await pumpView(tester, globalUa: presets.last);
 
-    await openMenu(tester, defaultUserAgents.last);
+    await openMenu(tester, presets.last);
     await tester.tap(find.text(currentAppLocalizations.delete));
     await tester.pumpAndSettle();
     await tester.tap(find.text(currentAppLocalizations.delete));
     await tester.pumpAndSettle();
 
-    expect(saved(), [defaultUserAgents.first]);
+    expect(saved(), [presets.first]);
     expect(selected(), isNull);
-    expect(find.text(defaultUserAgents.last), findsNothing);
+    expect(find.text(presets.last), findsNothing);
   });
 
   testWidgets('shows a selected value that is missing from the list', (
@@ -183,15 +204,15 @@ void main() {
     await pumpView(tester, globalUa: 'Legacy/1.0');
 
     expect(find.text('Legacy/1.0'), findsOneWidget);
-    expect(saved(), defaultUserAgents);
+    expect(saved(), presets);
 
-    await openMenu(tester, defaultUserAgents.first);
+    await openMenu(tester, presets.first);
     await tester.tap(find.text(currentAppLocalizations.delete));
     await tester.pumpAndSettle();
     await tester.tap(find.text(currentAppLocalizations.delete));
     await tester.pumpAndSettle();
 
-    expect(saved(), [defaultUserAgents.last, 'Legacy/1.0']);
+    expect(saved(), [presets.last, 'Legacy/1.0']);
     expect(selected(), 'Legacy/1.0');
   });
 }

@@ -30,7 +30,13 @@ const defaultBypassDomain = [
   '192.168.*',
 ];
 
-const defaultUserAgents = ['clash-verge/v2.4.2', 'ClashforWindows/0.19.23'];
+/// Presets listed under Settings > General > User-Agent.
+///
+/// Deliberately empty: the app always requests with its own `packageInfo.ua`,
+/// and the two presets older builds shipped (`clash-verge`, `Clash for
+/// Windows`) named other clients' cores, which made a request-header setting
+/// look like a core selector. Only what the user adds shows up here.
+const defaultUserAgents = <String>[];
 
 const defaultFilters = [
   Filter(
@@ -214,18 +220,24 @@ Object? _readTabAnimation(Map<dynamic, dynamic> json, String key) {
 }
 
 Object? _readUserAgents(Map<dynamic, dynamic> json, String key) {
-  if (json.containsKey(key)) {
-    return json[key];
+  final saved = json[key];
+  if (saved is List) {
+    // Drop the presets older builds shipped; a saved list that only held them
+    // becomes empty and the view falls back to the app's own User-Agent.
+    return saved
+        .whereType<String>()
+        .where((userAgent) => !retiredUserAgents.contains(userAgent))
+        .toList();
   }
   final legacy = json['customUserAgent'];
   if (legacy is! String) {
     return null;
   }
   final custom = legacy.trim();
-  if (custom.isEmpty || defaultUserAgents.contains(custom)) {
+  if (custom.isEmpty || retiredUserAgents.contains(custom)) {
     return null;
   }
-  return [...defaultUserAgents, custom];
+  return [custom];
 }
 
 @freezed

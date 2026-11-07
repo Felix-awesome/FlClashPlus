@@ -165,13 +165,19 @@ void main() {
   testWidgets('user agent item opens the page that applies a preset', (
     tester,
   ) async {
+    const preset = 'SmokeClient/1.0';
     tester.view.physicalSize = const Size(1000, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final container = ProviderContainer(
-      overrides: [profilesProvider.overrideWith(TestProfiles.new)],
+      overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
+        appSettingProvider.overrideWithBuild(
+          (_, _) => const AppSettingProps(userAgents: [preset]),
+        ),
+      ],
     );
     addTearDown(container.dispose);
     globalState.container = container;
@@ -192,15 +198,12 @@ void main() {
     await tester.tap(find.text('User-Agent'));
     await tester.pumpAndSettle();
     expect(find.byType(UserAgentsView), findsOneWidget);
-    expect(find.text('clash-verge/v2.4.2'), findsOneWidget);
+    expect(find.text(preset), findsOneWidget);
 
-    await tester.tap(find.text('clash-verge/v2.4.2'));
+    await tester.tap(find.text(preset));
     await tester.pumpAndSettle();
 
-    expect(
-      container.read(patchClashConfigProvider).globalUa,
-      'clash-verge/v2.4.2',
-    );
+    expect(container.read(patchClashConfigProvider).globalUa, preset);
     expect(tester.takeException(), null);
   });
 

@@ -11,6 +11,12 @@ part 'generated/clash_config.g.dart';
 
 const defaultClashConfig = PatchClashConfig();
 
+/// User-Agent values that older builds shipped as presets and that users could
+/// pin as `global-ua`. They impersonate other Clash clients on the wire, and
+/// offering them made the setting look like a choice of core -- this app has
+/// exactly one core, so they are dropped whenever saved settings are loaded.
+const retiredUserAgents = ['clash-verge/v2.4.2', 'ClashforWindows/0.19.23'];
+
 const defaultTun = Tun();
 const defaultDns = Dns();
 const defaultNtp = Ntp();
@@ -2110,6 +2116,16 @@ Map<String, Object?> _withLegacyGeneralOverrideKeys(Map<String, Object?> json) {
   };
 }
 
+/// A pinned retired preset is not a real choice, so it is dropped and the app
+/// falls back to its own request User-Agent.
+Map<String, Object?> _withRetiredUserAgent(Map<String, Object?> json) {
+  final userAgent = json['global-ua'];
+  if (userAgent is! String || !retiredUserAgents.contains(userAgent)) {
+    return json;
+  }
+  return {...json}..remove('global-ua');
+}
+
 @freezed
 abstract class PatchClashConfig with _$PatchClashConfig {
   const factory PatchClashConfig({
@@ -2180,8 +2196,10 @@ abstract class PatchClashConfig with _$PatchClashConfig {
 
   factory PatchClashConfig.fromJson(Map<String, Object?> json) =>
       _$PatchClashConfigFromJson(
-        _withLegacyGeneralOverrideKeys(
-          _withLegacyTunOverride(_withLegacyDnsOverrideKeys(json)),
+        _withRetiredUserAgent(
+          _withLegacyGeneralOverrideKeys(
+            _withLegacyTunOverride(_withLegacyDnsOverrideKeys(json)),
+          ),
         ),
       );
 

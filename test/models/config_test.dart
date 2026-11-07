@@ -292,6 +292,41 @@ void main() {
       );
     });
 
+    test('retired third-party user-agent presets are dropped on load', () {
+      expect(defaultUserAgents, isEmpty);
+      expect(
+        AppSettingProps.fromJson({
+          'userAgents': ['clash-verge/v2.4.2', 'ClashforWindows/0.19.23'],
+        }).userAgents,
+        isEmpty,
+      );
+      expect(
+        AppSettingProps.fromJson({
+          'userAgents': ['clash-verge/v2.4.2', 'CustomUA/1.0'],
+        }).userAgents,
+        ['CustomUA/1.0'],
+      );
+      expect(
+        AppSettingProps.fromJson({
+          'customUserAgent': 'ClashforWindows/0.19.23',
+        }).userAgents,
+        isEmpty,
+      );
+    });
+
+    test('a retired global user agent falls back to the app default', () {
+      for (final retired in retiredUserAgents) {
+        expect(
+          PatchClashConfig.fromJson({'global-ua': retired}).globalUa,
+          isNull,
+        );
+      }
+      expect(
+        PatchClashConfig.fromJson({'global-ua': 'CustomUA/1.0'}).globalUa,
+        'CustomUA/1.0',
+      );
+    });
+
     test('a legacy isAnimateToPage sets the tab animation', () {
       expect(
         AppSettingProps.fromJson({'isAnimateToPage': false}).tabAnimation,
