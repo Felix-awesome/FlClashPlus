@@ -123,5 +123,11 @@ func Start(fd int, stack, address, dns, rawOptions string) *sing_tun.Listener {
 		return nil
 	}
 
+	// Hiddify keeps its core's outbound sockets on the physical NIC with
+	// NWPathMonitor. Here the Swift side writes that interface into the shared
+	// home dir, and the watcher feeds it into dialer.DefaultInterface (which
+	// wins over the auto-detect finder on every dial, without taking its slot).
+	watchPhysicalInterface()
+
 	return listener
 }

@@ -107,15 +107,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         let stack = providerConfig["stack"] as? String ?? "gvisor"
         let address = providerConfig["address"] as? String ?? "198.18.0.1/30"
-        let dns = providerConfig["dns"] as? String ?? "198.18.0.1"
         let mtu = (providerConfig["mtu"] as? NSNumber)?.intValue ?? 9000
-        BootLog.write("stack=\(stack) address=\(address) dns=\(dns) mtu=\(mtu)")
 
         guard let parsed = Self.splitCIDR(address) else {
             fail(1, "invalid tunnel address: " + address,
                 completion: completionHandler)
             return
         }
+        // The core hijacks DNS on the *second* address of the TUN subnet
+        // (`Inet4Address.Addr().Next()` in mihomo's sing_tun, and
+        // `GetDNSServerAddress()` in Hiddify's libbox). Older app builds still
+        // send 198.18.0.1, which is the gvisor NIC's own address: nothing
+        // listens there, so every system DNS query times out and with it every
+        // proxy delay test. Derive it here rather than trusting the caller.
+        let dns = Self.nextIPv4Address(parsed.address) ?? "198.18.0.2"
+        BootLog.write("stack=\(stack) address=\(address) dns=\(dns) mtu=\(mtu)")
 
         // The settings that point this device's routes and DNS at the tunnel
         // are built here and submitted below, before startTunnel answers the
@@ -210,28 +216,47 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    /// Builds the tunnel's network settings: the interface address, the two /1
-    /// routes that take over from the default route, and a catch-all DNS match
-    /// domain so the core's fake-IP resolver sees every lookup.
+    /// Builds the tunnel's network settings: the interface address, the
+    /// Hiddify-style subnet routes plus a default route, the DNS server on the
+    /// TUN subnet's second address, and a catch-all DNS match domain so the
+    /// core's fake-IP resolver sees every lookup.
     private static func settings(
         address: String,
         mask: String,
         dns: String,
         mtu: Int
     ) -> NEPacketTunnelNetworkSettings {
+        // Hiddify uses "::1" because its TUN also carries an IPv6 address.
+        // This one is IPv4-only (198.18.0.1/30), so an IPv6 remote would give
+        // the system an IPv6 tunnel with no IPv6 address behind it. Keep the
+        // IPv4 remote; the route set below is what fixes the missing badge.
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
 
         let ipv4 = NEIPv4Settings(addresses: [address], subnetMasks: [mask])
-        // Two /1 routes split the whole IPv4 space in half and, being more
-        // specific than the default /0 route, replace it: 0.0.0.0/1 covers
-        // 0.0.0.0–127.255.255.255 and 128.0.0.0/1 covers 128.0.0.0–255.255.255.255.
-        // The mask is 128.0.0.0 (a single high bit), NOT 255.255.255.254 (/31):
-        // a /31 captures two addresses, so nothing but the tunnel endpoint
-        // itself would ever be routed into the tunnel and the device would have
-        // no network while the VPN is up.
+        // Hiddify / sing-box-for-apple route set: eight progressively wider
+        // subnets cover 1.0.0.0-255.255.255.255 and deliberately leave
+        // 0.0.0.0/8 (unspecified, DHCP, captive-probe addresses) to the
+        // system. Two /1 routes include that range, which is why a tunnel can
+        // come up with no VPN badge and a device that thinks it has no
+        // network. default() is what makes NetworkExtension adopt this tunnel
+        // as the default route and move NEVPNStatus to connected.
         ipv4.includedRoutes = [
-            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "128.0.0.0"),
+            NEIPv4Route(destinationAddress: "1.0.0.0", subnetMask: "255.0.0.0"),
+            NEIPv4Route(destinationAddress: "2.0.0.0", subnetMask: "254.0.0.0"),
+            NEIPv4Route(destinationAddress: "4.0.0.0", subnetMask: "252.0.0.0"),
+            NEIPv4Route(destinationAddress: "8.0.0.0", subnetMask: "248.0.0.0"),
+            NEIPv4Route(destinationAddress: "16.0.0.0", subnetMask: "240.0.0.0"),
+            NEIPv4Route(destinationAddress: "32.0.0.0", subnetMask: "224.0.0.0"),
+            NEIPv4Route(destinationAddress: "64.0.0.0", subnetMask: "192.0.0.0"),
             NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "128.0.0.0"),
+            NEIPv4Route.default(),
+        ]
+        // Punch the two lowest addresses out of the default route, as Hiddify
+        // does with excludeDefaultRoute: iOS uses them while an interface
+        // comes up, and a default route with no hole here can be judged
+        // "no network available".
+        ipv4.excludedRoutes = [
+            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "255.255.255.254"),
         ]
         settings.ipv4Settings = ipv4
 
@@ -452,6 +477,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return false
         }
         return FileManager.default.isWritableFile(atPath: path)
+    }
+
+    /// The second address of the TUN subnet, which is where the Go core
+    /// listens for hijacked DNS (mihomo: `Inet4Address.Addr().Next()`;
+    /// Hiddify/libbox: `GetDNSServerAddress()`). Both stacks require it and
+    /// refuse a /32 subnet for exactly this reason.
+    private static func nextIPv4Address(_ address: String) -> String? {
+        var octets = address.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4, octets.allSatisfy({ $0 >= 0 && $0 <= 255 }) else {
+            return nil
+        }
+        for i in stride(from: 3, through: 0, by: -1) {
+            if octets[i] < 255 {
+                octets[i] += 1
+                return octets.map { String($0) }.joined(separator: ".")
+            }
+            octets[i] = 0
+        }
+        return nil
     }
 
     /// Turns "198.18.0.1/30" into ("198.18.0.1", "255.255.255.252").

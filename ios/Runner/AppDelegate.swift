@@ -386,7 +386,10 @@ import NetworkExtension
             var providerConfig: [String: Any] = [
                 "stack": args["stack"] as? String ?? "gvisor",
                 "address": args["address"] as? String ?? "198.18.0.1/30",
-                "dns": args["dns"] as? String ?? "198.18.0.1",
+                // The extension derives the DNS server from the TUN address
+                // (address + 1) rather than trusting this value, because the
+                // core only hijacks DNS on that second address.
+                "dns": args["dns"] as? String ?? "198.18.0.2",
             ]
             // Leave the key out when the caller has no home dir: the extension
             // treats a missing key as "use the App Group container", but an

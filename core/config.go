@@ -166,8 +166,9 @@ func enableDnsForEmptyProfile(buf []byte, cfg *config.Config) {
 // answer a lookup.
 //
 // With DNS off mihomo sets resolver.DefaultResolver to nil, and a tun that
-// hijacks 198.18.0.1:53 into such a core has nowhere to send the query: the
-// device keeps its interface and loses the ability to resolve anything at all.
+// hijacks the device's DNS queries (sent to the TUN gateway, address + 1)
+// into such a core has nowhere to send the query: the device keeps its
+// interface and loses the ability to resolve anything at all.
 // A desktop app cannot end up here, because its traffic never depends on the
 // core for resolution.
 func enableDnsForTunnel(cfg *config.Config, reason string) {

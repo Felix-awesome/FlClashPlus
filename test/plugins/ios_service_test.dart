@@ -105,7 +105,7 @@ void main() {
       expect(args['homeDir'], '/tmp/home');
       expect(args['stack'], 'gvisor');
       expect(args['address'], '198.18.0.1/30');
-      expect(args['dns'], '198.18.0.1');
+      expect(args['dns'], '198.18.0.2');
     });
 
     test('treats an absent result as failure', () async {

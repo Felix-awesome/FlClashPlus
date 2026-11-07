@@ -1,5 +1,6 @@
 import Dispatch
 import Foundation
+import Network
 import NetworkExtension
 import FlClashCore
 
@@ -45,6 +46,11 @@ final class VpnCore {
     private let mtu: Int
     private var started = false
 
+    /// Publishes the system's active physical interface to the Go core, so its
+    /// outbound sockets are bound to the real NIC (Hiddify's
+    /// startDefaultInterfaceMonitor, carried over a shared file).
+    private var interfaceMonitor: PhysicalInterfaceMonitor?
+
     /// True once the core finished setup and the tun is live. Assigned before
     /// `MobileStartTun` so a call that arrives mid-setup is not answered by a
     /// half-initialized core.
@@ -59,7 +65,7 @@ final class VpnCore {
     init(homeDir: String,
          stack: String = "gvisor",
          address: String = "198.18.0.1/30",
-         dns: String = "198.18.0.1",
+         dns: String = "198.18.0.2",
          mtu: Int = 9000) {
         self.homeDir = homeDir
         self.stack = stack
@@ -77,6 +83,15 @@ final class VpnCore {
     ) throws {
         try FileManager.default.createDirectory(
             atPath: homeDir, withIntermediateDirectories: true)
+
+        // The tunnel owns the whole IPv4 routing table, so the BSD RIB reports
+        // the utun itself as the default route. Hiddify solves this by feeding
+        // NWPathMonitor's active interface into the core's dialer; the core
+        // here reads the same answer from a file in its home dir. Start it
+        // before QuickSetup so the very first outbound dial already has it.
+        let monitor = PhysicalInterfaceMonitor(homeDir: homeDir)
+        monitor.start()
+        interfaceMonitor = monitor
 
         // The core reads GEOIP/GEOSITE while it loads its first config, which
         // happens here and not on the app's schedule.
@@ -194,6 +209,8 @@ final class VpnCore {
     func stop() {
         isReady = false
         lastError = ""
+        interfaceMonitor?.stop()
+        interfaceMonitor = nil
         if started {
             MobileStopTun()
             started = false
@@ -326,6 +343,63 @@ private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
 ///
 /// A local `var` captured by such a closure is what Swift 6 rejects outright,
 /// and the semaphore in `start` needs the outcome of a callback it does not own.
+/// Keeps the Go core's outbound sockets on the real physical NIC.
+///
+/// Inside a packet tunnel the BSD routing table points at the utun, so an
+/// interface scan can only guess -- and picks a stale Wi-Fi interface when
+/// the device has moved to cellular. NWPathMonitor reports the path the
+/// system is actually using. Hiddify passes that to the core through a
+/// platform interface callback; here the same answer is written to a small
+/// file in the shared home dir, which the Go dialer reads on every dial.
+private final class PhysicalInterfaceMonitor {
+    private let fileURL: URL
+    private var monitor: NWPathMonitor?
+    private var lastName = ""
+
+    init(homeDir: String) {
+        fileURL = URL(fileURLWithPath: homeDir, isDirectory: true)
+            .appendingPathComponent("default_interface")
+    }
+
+    func start() {
+        let monitor = NWPathMonitor()
+        let firstUpdate = DispatchSemaphore(value: 0)
+        monitor.pathUpdateHandler = { [weak self] path in
+            self?.publish(path)
+            firstUpdate.signal()
+            monitor.pathUpdateHandler = { [weak self] path in
+                self?.publish(path)
+            }
+        }
+        monitor.start(queue: DispatchQueue.global(qos: .utility))
+        self.monitor = monitor
+        if firstUpdate.wait(timeout: .now() + 2) != .success {
+            BootLog.write("network: no path update within 2s; "
+                + "the core falls back to its own interface detection")
+        }
+    }
+
+    private func publish(_ path: NWPath) {
+        let active = path.status == .satisfied ? path.availableInterfaces : []
+        // utun/lo0/awdl0/bridge are either this tunnel or never carry internet
+        // traffic; binding an outbound socket to utun loops it straight back.
+        let name = active.first(where: { iface in
+            iface.name.hasPrefix("en") || iface.name.hasPrefix("pdp_ip")
+        })?.name ?? ""
+        guard name != lastName else { return }
+        lastName = name
+        try? (name + "\n").write(to: fileURL, atomically: true, encoding: .utf8)
+        BootLog.write("network: active physical interface "
+            + (name.isEmpty ? "<none>" : name))
+    }
+
+    func stop() {
+        monitor?.cancel()
+        monitor = nil
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+}
+
 final class Box<Value>: @unchecked Sendable {
     var value: Value?
 }
@@ -417,11 +491,13 @@ enum TunSocket {
 
     /// The descriptor whose socket sits on an interface named `utun*`.
     ///
-    /// Several can exist (an older session that has not been reaped yet, for
-    /// instance), and the newest is the one this tunnel just created, so the
-    /// highest descriptor wins.
+    /// WireGuard-Apple / Hiddify's `GetTunnelFileDescriptor` walk the fd table
+    /// and take the *first* utun control socket. Taking the highest one here
+    /// used to pick a stale descriptor left by a previous session: the Go
+    /// stack then read from a socket the system was no longer feeding, so the
+    /// tunnel looked up while carrying no traffic at all.
     private static func scan() -> Int32? {
-        var found: Int32?
+        var candidates: [Int32] = []
         var fd: Int32 = 0
         while fd <= 1024 {
             var name = [CChar](repeating: 0, count: Int(IFNAMSIZ))
@@ -433,10 +509,14 @@ enum TunSocket {
                 getsockopt(fd, 2, 2, buffer.baseAddress, &length)
             }
             if result == 0, String(cString: name).hasPrefix("utun") {
-                found = fd
+                candidates.append(fd)
             }
             fd += 1
         }
-        return found
+        if candidates.count > 1 {
+            BootLog.write("core: \(candidates.count) utun sockets \(candidates); "
+                + "using the first like WireGuard/libbox")
+        }
+        return candidates.first
     }
 }

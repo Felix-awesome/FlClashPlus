@@ -161,7 +161,10 @@ class IOSService {
     required String homeDir,
     String stack = 'gvisor',
     String address = '198.18.0.1/30',
-    String dns = '198.18.0.1',
+    // The core hijacks DNS on the TUN gateway (address + 1), not on the TUN
+    // address itself. The extension derives it again from `address`, so this
+    // is only the value handed to the platform channel for the saved config.
+    String dns = '198.18.0.2',
     Map<String, Object?> options = const {},
   }) async {
     final saved = await _call(
