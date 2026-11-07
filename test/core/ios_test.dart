@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/common/path.dart';
@@ -245,11 +246,33 @@ void main() {
       verify(() => service.invokeMethod(any())).called(1);
     });
 
-    test('returns null when the core never connects', () async {
+    // iOS keeps a NetworkExtension tunnel alive across an app relaunch, so the
+    // system can report one this process never started. The old gate waited
+    // 60s on a Future nobody would complete, and then answered every call as
+    // "unanswered" while the tunnel was in fact forwarding. The call now goes
+    // straight to the extension, which queues it until its core is ready.
+    test('a tunnel this process did not start answers at once', () async {
       when(() => service.getStatus()).thenAnswer((_) async => true);
       when(
         () => service.invokeMethod(any()),
       ).thenAnswer((_) async => const CoreMethodResponse(result: true));
+
+      final watch = Stopwatch()..start();
+      final result = await core.invokeMethod<bool>(
+        method: CoreMethod.getIsInit,
+      );
+      watch.stop();
+
+      expect(result, isTrue);
+      expect(watch.elapsed, lessThan(const Duration(seconds: 1)));
+      verify(() => service.invokeMethod(any())).called(1);
+    });
+
+    test('returns null when the extension never answers', () async {
+      when(() => service.getStatus()).thenAnswer((_) async => true);
+      when(() => service.invokeMethod(any())).thenAnswer(
+        (_) => Completer<CoreMethodResponse?>().future,
+      );
 
       final result = await core.invokeMethod<bool>(
         method: CoreMethod.getIsInit,

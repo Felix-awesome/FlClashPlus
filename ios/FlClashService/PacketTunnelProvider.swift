@@ -293,12 +293,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // returns. Waiting here turns that race into a slow call instead of a
         // failed one.
         //
-        // Two waits are stacked and their lengths have to differ: this one
-        // covers VpnCore's own 45s wait for QuickSetup plus the StartTun that
-        // follows it. Equal timeouts made the two give up in the same instant,
-        // so a slow first init always answered nothing a moment before the core
-        // went live.
-        waitForCore(timeout: 75) { [weak self] core in
+        // Two waits are stacked and their lengths have to differ: VpnCore
+        // spends up to 45s on QuickSetup, 15s installing network settings and
+        // another 15s borrowing the utun fd -- 75s before StartTun even runs.
+        // Waiting exactly 75s here made both sides give up in the same instant,
+        // so a slow first init answered "core_not_ready" a moment before the
+        // core went live, leaving it on its empty default config: no proxies,
+        // and every delay test timing out. Leave a full minute of headroom.
+        // CoreFileRelay.acknowledgedGrace is sized against this number.
+        waitForCore(timeout: 120) { [weak self] core in
             guard let core = core else {
                 let setupError = self?.vpnCore?.lastError ?? ""
                 let reason = startError.isEmpty ? setupError : startError

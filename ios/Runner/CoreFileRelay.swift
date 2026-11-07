@@ -34,8 +34,11 @@ final class CoreFileRelay {
     /// Extra time granted once the extension says it has the call in hand. It
     /// may still be waiting for QuickSetup to compile a first rule set, which
     /// takes tens of seconds on an older device -- and that wait is exactly the
-    /// one the base timeout above must not be stretched to cover.
-    private static let acknowledgedGrace: TimeInterval = 90
+    /// one the base timeout above must not be stretched to cover. The extension
+    /// waits up to 120s for its core (PacketTunnelProvider.waitForCore), so this
+    /// has to outlast that wait or an acknowledged call is discarded just as the
+    /// answer is being written.
+    private static let acknowledgedGrace: TimeInterval = 150
 
     private struct Pending {
         let method: String

@@ -20,18 +20,13 @@ import 'spill.dart';
 /// The actual core boot (QuickSetup + StartTun) happens inside the extension's
 /// PacketTunnelProvider, not here.
 
-/// How long a core call waits for the tunnel before it is sent.
-///
-/// On iOS "connected" means two things in sequence: the system builds the
-/// tunnel, and the extension boots the core inside it. On a first launch that
-/// takes tens of seconds on an older device -- far past the shared 10s gate.
-/// A call therefore gave up a moment before the tunnel came up, and the app
-/// reported "Core did not answer setupConfig" no matter how long the extension
-/// itself was willing to wait for its core: the request was never sent at all.
-const _iosConnectionWaitDuration = Duration(seconds: 60);
-
 /// How long a call waits for the system to finish starting a session the app
 /// did not start itself, after the status still reads "not running".
+///
+/// The core's own boot is deliberately NOT waited out here: the extension
+/// queues every request until its core is ready (see CoreBridge / waitForCore),
+/// so a second wait on this side only adds a timeout that can fire before the
+/// extension's answer arrives.
 const _iosStatusProbeDuration = Duration(seconds: 2);
 
 class CoreIOS extends CoreHandlerInterface {
@@ -317,16 +312,18 @@ class CoreIOS extends CoreHandlerInterface {
 
   /// Whether a core call should be sent now.
   ///
-  /// "Not connected" has two very different causes on iOS, and only one of
-  /// them is worth waiting out:
+  /// "Not connected" has two very different causes on iOS, and neither one is
+  /// worth a long wait here:
   ///
-  /// - A tunnel exists and its extension is still booting the core -- the
-  ///   system restarted it, or on-demand brought it back. That boot compiles
-  ///   the whole rule set on a first launch, so the wait is generous.
   /// - No tunnel exists. Nothing is booting, so the call would be answered by
   ///   nobody however long it waited; answering it now keeps the caller's own
   ///   fallback (an unvalidated profile, a skipped query) from arriving a
   ///   minute late, which from the outside is indistinguishable from a hang.
+  /// - A tunnel exists (the system kept it across an app relaunch, or brought
+  ///   it back on demand) but this process never completed its gate. The
+  ///   extension boots the core in its own time and queues requests until then,
+  ///   so the call is sent immediately rather than waiting on a Future nobody
+  ///   is going to complete.
   Future<bool> _waitForConnection(CoreMethod method) async {
     // Nothing to wait for: this is the path every call takes while the tunnel
     // is up, so it must not cost a channel round trip.
@@ -348,14 +345,19 @@ class CoreIOS extends CoreHandlerInterface {
       );
       return false;
     }
-    if (await _awaitConnected(_iosConnectionWaitDuration)) {
-      return true;
+    // The system reports a live tunnel, but this process never completed the
+    // gate: iOS keeps a NetworkExtension tunnel alive across an app relaunch,
+    // and a stopped/restarted lifecycle also leaves the gate pending. Nobody
+    // will ever complete that Future, so waiting on it here costs the full
+    // connection timeout and then reports a tunnel that was in fact answering
+    // all along -- getProxies comes back empty and every delay test times out
+    // while traffic is being forwarded normally. Let the call through: the
+    // extension already queues requests until its core is ready (CoreBridge's
+    // waitForCore), with a longer budget than this side ever had.
+    if (!_connectedCompleter.isCompleted) {
+      _connectedCompleter.complete(true);
     }
-    commonPrint.log(
-      'Invoke method ${method.name} timed out waiting for the tunnel',
-      logLevel: LogLevel.warning,
-    );
-    return false;
+    return true;
   }
 
   /// Waits up to [timeout] for the tunnel to report itself connected.
