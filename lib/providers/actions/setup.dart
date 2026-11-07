@@ -41,6 +41,15 @@ class SetupAction extends _$SetupAction {
   final _listenerScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
   DateTime? _startTime;
+
+  /// Whether the user asked the run to stop.
+  ///
+  /// A run that fails is rolled back through [_setLocalRunning], while an
+  /// explicit stop arrives through [_run]. Keeping the two apart is what lets
+  /// [_ensureTunnelAliveForApply] bring the tunnel back for a profile switch
+  /// without overriding a stop the user asked for.
+  var _userStopped = false;
+
   _SetupInputs? _appliedInputs;
   var _lastPushDuration = Duration.zero;
   var _pendingForceApply = false;
@@ -171,6 +180,15 @@ class SetupAction extends _$SetupAction {
       return Future.value(true);
     }
     return _run(running, initialize: running && initialize);
+  }
+
+  /// Records what the user asked the run to do.
+  ///
+  /// A failure rolls the run back through [_setLocalRunning], and that must not
+  /// read as a stop the user chose: only this call does, so iOS can still bring
+  /// the tunnel back when a profile finally exists to apply.
+  void recordRunIntent(bool running) {
+    _userStopped = !running;
   }
 
   Future<bool> _run(
@@ -449,7 +467,7 @@ class SetupAction extends _$SetupAction {
     // again first so the profile builds against a live core instead of failing
     // silently as an empty result.
     if (system.isIOS) {
-      await _ensureTunnelAliveIfExpected();
+      await _ensureTunnelAliveForApply();
     }
     final result = await _runSetup(
       force: force,
@@ -459,26 +477,44 @@ class SetupAction extends _$SetupAction {
     return result != _SetupTaskResult.failed;
   }
 
-  /// Starts the tunnel again when the running state says it should be up but
-  /// iOS reports it is gone.
+  /// Makes sure the tunnel is up before this apply reaches the core.
   ///
-  /// [isStartProvider] is driven by the run time (set when a start succeeds),
-  /// so it can stay true after the system silently reaped the extension. The
-  /// AppDelegate's getStatus reports a reaped provider as stopped (its alive
-  /// heartbeat has gone stale), so the two disagreeing is exactly "the tunnel
-  /// the user believes in is dead". Starting it again here reuses the normal
-  /// start path -- which saves the config and waits for the tunnel to come up
-  /// -- and never re-enters applyProfile, so there is no recursion.
-  Future<void> _ensureTunnelAliveIfExpected() async {
-    if (!ref.read(isStartProvider)) {
-      return;
-    }
+  /// Two states mean the tunnel should be there but is not:
+  ///
+  /// - [isStartProvider] says "on" while iOS reports the tunnel is gone. That
+  ///   is driven by the run time, so it stays true after the system silently
+  ///   reaped the extension; the AppDelegate's getStatus reports a reaped
+  ///   provider as stopped (its alive heartbeat has gone stale). The two
+  ///   disagreeing is exactly "the tunnel the user believes in is dead".
+  /// - The run state says "off" only because the launch was rolled back. A
+  ///   first launch has no profile yet, so the apply that follows it fails and
+  ///   the rollback stops the tunnel with it. Adding a subscription is the
+  ///   moment that reason goes away, and without starting here the tunnel stays
+  ///   down for good: every core call is then skipped as "no tunnel is
+  ///   running", so the proxies cannot even be delay-tested and the app looks
+  ///   broken rather than switched off. An explicit stop is still honoured --
+  ///   that is the only path that sets [_userStopped].
+  ///
+  /// Starting again reuses the normal start path (which saves the config and
+  /// waits for the tunnel to come up) and never re-enters applyProfile, so
+  /// there is no recursion.
+  Future<void> _ensureTunnelAliveForApply() async {
     final running = await iosService?.getStatus() ?? false;
     if (running) {
       return;
     }
+    final expected = ref.read(isStartProvider) || !_userStopped;
+    // Without a profile there is nothing for a tunnel to carry, and starting
+    // one here would only repeat the launch-time rollback.
+    if (!expected || ref.read(currentProfileProvider) == null) {
+      return;
+    }
     commonPrint.log(
-      'The tunnel is reported down while the run state is on; restarting it',
+      ref.read(isStartProvider)
+          ? 'The tunnel is reported down while the run state is on; '
+                'restarting it'
+          : 'The tunnel is down and a profile is about to be applied; '
+                'starting it',
       logLevel: LogLevel.warning,
     );
     // A restart that fails must not take the whole profile switch down with
@@ -489,7 +525,7 @@ class SetupAction extends _$SetupAction {
       await setRunning(true, initialize: false);
     } catch (error) {
       commonPrint.log(
-        'Restarting the tunnel for the profile switch failed: $error',
+        'Starting the tunnel for the profile switch failed: $error',
         logLevel: LogLevel.warning,
       );
     }

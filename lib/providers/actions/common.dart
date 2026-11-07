@@ -10,14 +10,14 @@ class CommonAction extends _$CommonAction {
 
   void toggleRunning() {
     final running = !ref.read(isStartProvider);
+    final setupAction = ref.read(setupActionProvider.notifier);
+    setupAction.recordRunIntent(running);
     unawaited(
       globalState.safeRun(
-        () => ref
-            .read(setupActionProvider.notifier)
-            .setRunning(
-              running,
-              initialize: running && !ref.read(initProvider),
-            ),
+        () => setupAction.setRunning(
+          running,
+          initialize: running && !ref.read(initProvider),
+        ),
       ),
     );
   }
