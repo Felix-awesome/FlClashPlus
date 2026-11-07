@@ -353,7 +353,9 @@ private final class ResultCallback: NSObject, MobileResultHandlerProtocol {
 /// file in the shared home dir, which the Go dialer reads on every dial.
 private final class PhysicalInterfaceMonitor {
     private let fileURL: URL
-    private var monitor: NWPathMonitor?
+    // NetworkExtension also ships a legacy ObjC `NWPath` class, so both
+    // NWPath and NWPathMonitor have to be module-qualified here.
+    private var monitor: Network.NWPathMonitor?
     private var lastName = ""
 
     init(homeDir: String) {
@@ -362,7 +364,7 @@ private final class PhysicalInterfaceMonitor {
     }
 
     func start() {
-        let monitor = NWPathMonitor()
+        let monitor = Network.NWPathMonitor()
         let firstUpdate = DispatchSemaphore(value: 0)
         monitor.pathUpdateHandler = { [weak self] path in
             self?.publish(path)
@@ -379,7 +381,7 @@ private final class PhysicalInterfaceMonitor {
         }
     }
 
-    private func publish(_ path: NWPath) {
+    private func publish(_ path: Network.NWPath) {
         let active = path.status == .satisfied ? path.availableInterfaces : []
         // utun/lo0/awdl0/bridge are either this tunnel or never carry internet
         // traffic; binding an outbound socket to utun loops it straight back.
