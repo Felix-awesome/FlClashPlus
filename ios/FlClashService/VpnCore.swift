@@ -133,10 +133,10 @@ final class VpnCore {
         }
 
         // The tunnel's routes and DNS are already in place by the time this
-        // runs: startTunnel installs the network settings before it answers the
-        // system, which is the order NetworkExtension requires. Installing them
-        // here instead -- from the background boot, after the completion was
-        // already called -- left the live session with an empty configuration:
+        // runs: startTunnel submits the network settings before it answers the
+        // system, and only calls this boot once their completion has fired.
+        // Installing them here instead -- after the completion was already
+        // called -- left the live session with an empty configuration:
         // NEVPNStatus said "connected", no VPN badge appeared, and neither the
         // /1 routes nor the DNS server ever pointed at this utun.
         //

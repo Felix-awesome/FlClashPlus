@@ -38,12 +38,28 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         completion: @escaping (Error?) -> Void
     ) {
         lastStartError = message
+        // No core will ever boot after this, so calls must not wait out the
+        // readiness timeout; answer them with the reason at once.
+        bootFailed = true
         BootLog.write("startTunnel failed: \(message)")
         completion(NSError(
             domain: "FlClash",
             code: code,
             userInfo: [NSLocalizedDescriptionKey: message]
         ))
+    }
+
+    /// Reports a failure that happens after startTunnel has already answered
+    /// the system. The completion must not be called twice, so the reason is
+    /// written to the boot log (the app attaches it to the start failure) and
+    /// the provider is exited: the system then takes the tunnel down, which is
+    /// what the app's start watch sees and reports.
+    private func reportBootFailure(_ message: String) {
+        lastStartError = message
+        bootFailed = true
+        BootLog.write("startTunnel failed: " + message)
+        BootLog.write("exiting so the system tears the tunnel down")
+        exit(EXIT_FAILURE)
     }
 
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
@@ -102,10 +118,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         // The settings that point this device's routes and DNS at the tunnel
-        // are built here and applied below, before startTunnel answers the
-        // system. NetworkExtension only adopts them as part of bringing the
-        // session up; applying them afterwards from the background core boot
-        // leaves the live tunnel with no routes and no DNS at all.
+        // are built here and submitted below, before startTunnel answers the
+        // system, so NetworkExtension has them in hand as it brings the
+        // session up.
         let settings = Self.settings(
             address: parsed.address,
             mask: parsed.mask,
@@ -124,22 +139,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             self?.answer(message, reply: reply)
         }
 
-        // NetworkExtension reads a tunnel's routes and DNS from the settings
-        // that exist when startTunnel's completion is called. The old order
-        // answered the system first and installed them from the background
-        // boot nearly two seconds later; the live session came up with an empty
-        // configuration -- NEVPNStatus said "connected", no VPN badge appeared,
-        // and neither the /1 routes nor the DNS server ever pointed at the
-        // utun. A later setTunnelNetworkSettings call answers with success but
-        // does not repair a session the system has already brought up.
-        //
-        // Install them here, before answering. The core still boots on another
-        // queue: holding the completion for QuickSetup (up to 45s on a first
-        // run) made the app's own start watch give up and turned every boot
-        // failure into one cause-less message. The short window between these
-        // settings taking effect and MobileStartTun is the one the core spends
-        // draining the packet flow anyway, and is under two seconds on a live
-        // device.
+        // Submit the settings request before answering the system, but wait
+        // for its completion on a background queue (see the note below).
+        // The core boot follows that completion, and the system is still
+        // answered at once: holding the completion for QuickSetup (up to 45s
+        // on a first run) is what made the app's own start watch give up
+        // earlier.
         BootLog.write("installing network settings before answering the system")
         let installStarted = Date()
         let installed = DispatchSemaphore(value: 0)
@@ -148,23 +153,33 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             installError.value = error.map { $0 as NSError }
             installed.signal()
         }
-        guard installed.wait(timeout: .now() + 15) == .success else {
-            fail(4, "setTunnelNetworkSettings timed out",
-                 completion: completionHandler)
-            return
-        }
-        if let error = installError.value {
-            fail(4, "setTunnelNetworkSettings failed: " + error.localizedDescription,
-                 completion: completionHandler)
-            return
-        }
-        BootLog.write("network settings installed in "
-            + String(format: "%.1fs", Date().timeIntervalSince(installStarted)))
 
+        // Answer immediately, and never wait for that signal on this queue.
+        // NetworkExtension delivers the settings completion on the same serial
+        // queue that is running startTunnel, so a semaphore here blocks the
+        // very callback it waits for: the boot log showed four starts, each
+        // failing at precisely 15.0s with "timed out", followed by
+        // connecting -> disconnecting -> disconnected. Keeping the completion
+        // immediate also covers the other reading of that log -- the system
+        // withholding the settings callback until startTunnel has answered.
+        // The request above is still submitted first, so the routes and DNS
+        // are in the system's hands when it brings the session up.
         completionHandler(nil)
-        BootLog.write("startTunnel answered; core boots in background")
+        BootLog.write("startTunnel answered; settings and core settle in background")
 
         DispatchQueue.global(qos: .userInitiated).async {
+            guard installed.wait(timeout: .now() + 15) == .success else {
+                self.reportBootFailure("setTunnelNetworkSettings timed out")
+                return
+            }
+            if let error = installError.value {
+                self.reportBootFailure("setTunnelNetworkSettings failed: "
+                    + error.localizedDescription)
+                return
+            }
+            BootLog.write("network settings installed in "
+                + String(format: "%.1fs", Date().timeIntervalSince(installStarted)))
+
             do {
                 try core.start(
                     packetFlow: self.packetFlow,
@@ -176,9 +191,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.lastStartError = error.localizedDescription
                 BootLog.write("core boot failed: " + error.localizedDescription)
                 // A tunnel whose core never came up can only black-hole the
-                // traffic it was given -- the routes went in before
-                // startTunnel answered, so by the time this throws, packets
-                // are already being handed to a flow nobody drains. Killing the
+                // traffic it was given -- the routes are in place by now, so
+                // by the time this throws, packets are already being handed
+                // to a flow nobody drains. Killing the
                 // provider is the one way to make the system take the tunnel
                 // down again (clashmi does the same), which returns networking
                 // to the device and leaves the reason in the startup log.
@@ -316,8 +331,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         //
         // Two waits are stacked and their lengths have to differ: VpnCore
         // spends up to 45s on QuickSetup and another 15s borrowing the utun fd
-        // -- 60s before StartTun even runs. The settings pass used to be part
-        // of that boot too; it now finishes before startTunnel answers. Waiting
+        // -- 60s before StartTun even runs. The settings pass sits in front
+        // of that boot too, on a background queue. Waiting
         // exactly as long as the boot made both sides give up in the same
         // instant, so a slow first init answered "core_not_ready" a moment
         // before the core went live, leaving it on its empty default config:

@@ -738,11 +738,27 @@ import NetworkExtension
     }
 
     private func stop(_ result: @escaping FlutterResult) {
-        let stopNow: (NETunnelProviderManager?) -> Void = { manager in
+        let stopNow: (NETunnelProviderManager?) -> Void = { [weak self] manager in
             Self.log("stop requested (tunnel "
                 + Self.statusName(manager?.connection.status ?? .invalid) + ")")
-            manager?.connection.stopVPNTunnel()
-            result(true)
+            let connection = manager?.connection
+            connection?.stopVPNTunnel()
+            // stopVPNTunnel only queues the teardown. Answering at once lets
+            // the Dart side call start() while the status is still
+            // "disconnecting" -- the boot log shows it arriving 8ms later --
+            // and the teardown of the old session then cancels that fresh
+            // start, which the app reports as start_failed with a
+            // connecting -> disconnecting -> disconnected trail. Wait for the
+            // status to settle before the caller is allowed to start again.
+            guard let self = self else {
+                result(true)
+                return
+            }
+            self.waitForDisconnect(
+                connection,
+                deadline: Date().addingTimeInterval(3),
+                result: result
+            )
         }
         if let cached = cachedManager {
             stopNow(cached)
@@ -750,6 +766,25 @@ import NetworkExtension
             loadTunnelManager(createIfMissing: false) { manager, _ in
                 stopNow(manager)
             }
+        }
+    }
+
+    /// Lets an asynchronous stopVPNTunnel finish before [result] is answered.
+    /// Bounded, so a status the system never settles still returns.
+    private func waitForDisconnect(
+        _ connection: NEVPNConnection?,
+        deadline: Date,
+        result: @escaping FlutterResult
+    ) {
+        guard let connection = connection,
+              connection.status != .disconnected,
+              connection.status != .invalid,
+              Date() < deadline else {
+            result(true)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.waitForDisconnect(connection, deadline: deadline, result: result)
         }
     }
 
