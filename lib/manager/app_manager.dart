@@ -118,10 +118,9 @@ class AppEnvManager extends ConsumerWidget {
     if (safeMode) {
       return 'SAFE MODE';
     }
-    if (!globalState.isPre) {
-      return null;
-    }
-    return kDebugMode ? 'DEBUG' : globalState.appEnv.toUpperCase();
+    // Only a debug build off the stable channel says so; release builds carry
+    // no channel badge.
+    return globalState.isPre && kDebugMode ? 'DEBUG' : null;
   }
 
   @override

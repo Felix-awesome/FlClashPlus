@@ -38,4 +38,17 @@ void main() {
     expect(banner.message, 'SAFE MODE');
     expect(find.byKey(const Key('child')), findsOneWidget);
   });
+
+  testWidgets('an off-stable debug build says DEBUG, not its channel', (
+    tester,
+  ) async {
+    globalState.appEnv = 'pre';
+    addTearDown(() => globalState.appEnv = 'stable');
+
+    await pump(tester, safeMode: false);
+
+    expect(find.byType(Banner), findsOneWidget);
+    final banner = tester.widget<Banner>(find.byType(Banner));
+    expect(banner.message, 'DEBUG');
+  });
 }
