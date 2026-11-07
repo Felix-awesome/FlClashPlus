@@ -74,6 +74,18 @@ func Start(fd int, stack, address, dns, rawOptions string) *sing_tun.Listener {
 		}
 		dnsHijack = append(dnsHijack, hijack)
 	}
+	// The generated config asks for `dns-hijack: [any:53]`, but on iOS the TUN
+	// is built from the Swift-side parameters (StartTun -> tun.Start) and never
+	// reads that file. Only the tunnel DNS server ended up in DNSHijack, so any
+	// query an app sends to another resolver -- a hard-coded 8.8.8.8, a DNS the
+	// system appends alongside ours -- went through the gvisor stack unhijacked,
+	// was matched by the routing rules as an ordinary UDP flow, and never got an
+	// answer. Restore the catch-all that the config always asked for. The core's
+	// own outbound sockets are bound to the physical NIC, so they never enter
+	// this stack and are not affected.
+	if runtime.GOOS == "ios" {
+		dnsHijack = append(dnsHijack, "any:53")
+	}
 
 	dupFd, err := syscall.Dup(fd)
 	if err != nil {

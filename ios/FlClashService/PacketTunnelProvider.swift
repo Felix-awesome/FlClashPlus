@@ -101,15 +101,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        // The settings that point this device's routes and DNS at the tunnel are
-        // built here but applied by the core's own startup (VpnCore.start).
-        //
-        // That order matters more than it looks: installing them now would send
-        // every packet into a flow nobody drains until QuickSetup finishes, and
-        // on a first run that is tens of seconds of what the user experiences as
-        // the network simply dying -- including the profile download they are in
-        // the middle of. clashmi hands the settings over from inside its core's
-        // startup for exactly this reason.
+        // The settings that point this device's routes and DNS at the tunnel
+        // are built here and applied below, before startTunnel answers the
+        // system. NetworkExtension only adopts them as part of bringing the
+        // session up; applying them afterwards from the background core boot
+        // leaves the live tunnel with no routes and no DNS at all.
         let settings = Self.settings(
             address: parsed.address,
             mask: parsed.mask,
@@ -128,17 +124,43 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             self?.answer(message, reply: reply)
         }
 
-        // Answer the system now, and boot the core on another queue.
+        // NetworkExtension reads a tunnel's routes and DNS from the settings
+        // that exist when startTunnel's completion is called. The old order
+        // answered the system first and installed them from the background
+        // boot nearly two seconds later; the live session came up with an empty
+        // configuration -- NEVPNStatus said "connected", no VPN badge appeared,
+        // and neither the /1 routes nor the DNS server ever pointed at the
+        // utun. A later setTunnelNetworkSettings call answers with success but
+        // does not repair a session the system has already brought up.
         //
-        // This call is what moves the connection's status from "connecting" to
-        // "connected". Holding it until QuickSetup returned (up to 45s on a
-        // first run, longer on an old device) made the app's own start watch
-        // give up with "the tunnel did not come up" while the provider was in
-        // fact booting normally -- and it turned every core-boot failure into
-        // the same, cause-less message. Returning here instead lets the tunnel
-        // report itself up in seconds; core calls wait for readiness on their
-        // own, and a boot failure is reported through them (lastStartError)
-        // instead of being swallowed.
+        // Install them here, before answering. The core still boots on another
+        // queue: holding the completion for QuickSetup (up to 45s on a first
+        // run) made the app's own start watch give up and turned every boot
+        // failure into one cause-less message. The short window between these
+        // settings taking effect and MobileStartTun is the one the core spends
+        // draining the packet flow anyway, and is under two seconds on a live
+        // device.
+        BootLog.write("installing network settings before answering the system")
+        let installStarted = Date()
+        let installed = DispatchSemaphore(value: 0)
+        let installError = Box<NSError>()
+        setTunnelNetworkSettings(settings) { error in
+            installError.value = error.map { $0 as NSError }
+            installed.signal()
+        }
+        guard installed.wait(timeout: .now() + 15) == .success else {
+            fail(4, "setTunnelNetworkSettings timed out",
+                 completion: completionHandler)
+            return
+        }
+        if let error = installError.value {
+            fail(4, "setTunnelNetworkSettings failed: " + error.localizedDescription,
+                 completion: completionHandler)
+            return
+        }
+        BootLog.write("network settings installed in "
+            + String(format: "%.1fs", Date().timeIntervalSince(installStarted)))
+
         completionHandler(nil)
         BootLog.write("startTunnel answered; core boots in background")
 
@@ -146,8 +168,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             do {
                 try core.start(
                     packetFlow: self.packetFlow,
-                    tunnelProvider: self,
-                    settings: settings
+                    tunnelProvider: self
                 )
                 BootLog.write("core boot finished: tun live")
             } catch {
@@ -155,9 +176,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.lastStartError = error.localizedDescription
                 BootLog.write("core boot failed: " + error.localizedDescription)
                 // A tunnel whose core never came up can only black-hole the
-                // traffic it was given -- the routes are installed inside the
-                // core's startup, so by the time this throws, packets are
-                // already being handed to a flow nobody drains. Killing the
+                // traffic it was given -- the routes went in before
+                // startTunnel answered, so by the time this throws, packets
+                // are already being handed to a flow nobody drains. Killing the
                 // provider is the one way to make the system take the tunnel
                 // down again (clashmi does the same), which returns networking
                 // to the device and leaves the reason in the startup log.
@@ -288,19 +309,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         let started = Date()
-        // The app calls in as soon as the tunnel reports itself up, but the core
-        // is only built after setTunnelNetworkSettings completes and QuickSetup
-        // returns. Waiting here turns that race into a slow call instead of a
-        // failed one.
+        // The app calls in as soon as the tunnel reports itself up, but the
+        // core is only built after the network settings are installed and
+        // QuickSetup returns. Waiting here turns that race into a slow call
+        // instead of a failed one.
         //
         // Two waits are stacked and their lengths have to differ: VpnCore
-        // spends up to 45s on QuickSetup, 15s installing network settings and
-        // another 15s borrowing the utun fd -- 75s before StartTun even runs.
-        // Waiting exactly 75s here made both sides give up in the same instant,
-        // so a slow first init answered "core_not_ready" a moment before the
-        // core went live, leaving it on its empty default config: no proxies,
-        // and every delay test timing out. Leave a full minute of headroom.
-        // CoreFileRelay.acknowledgedGrace is sized against this number.
+        // spends up to 45s on QuickSetup and another 15s borrowing the utun fd
+        // -- 60s before StartTun even runs. The settings pass used to be part
+        // of that boot too; it now finishes before startTunnel answers. Waiting
+        // exactly as long as the boot made both sides give up in the same
+        // instant, so a slow first init answered "core_not_ready" a moment
+        // before the core went live, leaving it on its empty default config:
+        // no proxies, and every delay test timing out. Leave a full minute of
+        // headroom. CoreFileRelay.acknowledgedGrace is sized against this
+        // number.
         waitForCore(timeout: 120) { [weak self] core in
             guard let core = core else {
                 let setupError = self?.vpnCore?.lastError ?? ""

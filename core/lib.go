@@ -244,6 +244,22 @@ func logOutboundInterface() {
 	}
 	name := finder.FindInterfaceName(netip.MustParseAddr("1.1.1.1"))
 	bootLog("outbound interface: %q", name)
+	// An interface can be up, have an IPv4 address and still carry no internet
+	// (a captive Wi-Fi while the device uses cellular, for instance). The name
+	// alone cannot tell that from a broken bind, so record what the chosen NIC
+	// actually owns: the exported log then shows whether the core dialled from
+	// a real address or from a network that only looks usable.
+	if iface, err := net.InterfaceByName(name); err == nil {
+		if addrs, err := iface.Addrs(); err == nil {
+			for _, addr := range addrs {
+				if prefix, err := netip.ParsePrefix(addr.String()); err == nil && prefix.Addr().Is4() {
+					bootLog("outbound interface address: %s", prefix.Addr())
+				}
+			}
+		}
+	} else {
+		bootLog("outbound interface lookup failed: %v", err)
+	}
 }
 
 var (
