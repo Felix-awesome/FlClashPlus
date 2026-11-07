@@ -1,3 +1,4 @@
+import Darwin
 import Dispatch
 import Foundation
 import Network
@@ -520,5 +521,139 @@ enum TunSocket {
                 + "using the first like WireGuard/libbox")
         }
         return candidates.first
+    }
+}
+
+/// Records what the kernel says the tunnel's own utun is carrying.
+///
+/// The extension cannot count packets itself -- the core owns the borrowed
+/// descriptor and drains it -- but the kernel keeps per-interface counters, and
+/// they are the one signal that does not depend on the core being right.
+///
+/// They exist to separate two failures that look identical from the app ("the
+/// tunnel is up and every node times out"):
+///
+///  - the utun counters grow while the core's own traffic line stays at
+///    +0.0 KiB: the system is feeding packets into a socket the core is not
+///    reading, i.e. the descriptor borrowed from the fd table is the wrong
+///    one. Nothing reaches the tunnel stack, so nothing can be proxied.
+///  - neither counter moves: the packets never entered the utun at all, so the
+///    routes or the DNS settings the extension installed are the problem.
+///
+/// Sampling is fast for the first few minutes (the window every report is
+/// about) and slow afterwards, so a long-lived tunnel does not fill the log the
+/// app reads back.
+final class TunnelTrafficMonitor {
+
+    struct Counters {
+        var receivedPackets: UInt32 = 0
+        var sentPackets: UInt32 = 0
+        var receivedBytes: UInt32 = 0
+        var sentBytes: UInt32 = 0
+    }
+
+    private static let fastInterval: TimeInterval = 15
+    private static let slowInterval: TimeInterval = 60
+    private static let fastSamples = 20
+
+    private let queue = DispatchQueue(label: "com.follow.clash.traffic")
+    private var timer: DispatchSourceTimer?
+    private var last: [String: Counters] = [:]
+    private var samples = 0
+    private var stopped = false
+
+    func start(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.timer == nil, !self.stopped else { return }
+            // One sample immediately: it proves the counters are readable and
+            // gives the baseline the next delta is measured from.
+            self.sample(label: "first sample, " + reason)
+            let timer = DispatchSource.makeTimerSource(queue: self.queue)
+            timer.schedule(
+                deadline: .now() + Self.fastInterval,
+                repeating: Self.fastInterval)
+            timer.setEventHandler { [weak self] in self?.tick() }
+            timer.resume()
+            self.timer = timer
+        }
+    }
+
+    func stop() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.stopped = true
+            self.timer?.cancel()
+            self.timer = nil
+            self.last = [:]
+        }
+    }
+
+    private func tick() {
+        samples += 1
+        sample(label: nil)
+        if samples == Self.fastSamples {
+            timer?.schedule(
+                deadline: .now() + Self.slowInterval,
+                repeating: Self.slowInterval)
+        }
+    }
+
+    private func sample(label: String?) {
+        let counters = Self.read()
+        guard !counters.isEmpty else {
+            BootLog.write("traffic: no utun interface in this process "
+                + "(getifaddrs found none)")
+            return
+        }
+        var parts: [String] = []
+        for name in counters.keys.sorted() {
+            let current = counters[name] ?? Counters()
+            let previous = last[name] ?? Counters()
+            // The counters are 32-bit and wrap; a plain subtraction would
+            // report a negative delta as a huge one after 4 GiB.
+            let receivedPackets = current.receivedPackets &- previous.receivedPackets
+            let sentPackets = current.sentPackets &- previous.sentPackets
+            let receivedBytes = current.receivedBytes &- previous.receivedBytes
+            let sentBytes = current.sentBytes &- previous.sentBytes
+            parts.append(String(
+                format: "%@ rx +%d pkts/%.1f KiB, tx +%d pkts/%.1f KiB",
+                name,
+                Int(receivedPackets),
+                Double(receivedBytes) / 1024,
+                Int(sentPackets),
+                Double(sentBytes) / 1024))
+        }
+        last = counters
+        let prefix = label.map { "traffic (" + $0 + "): " } ?? "traffic: "
+        BootLog.write(prefix + parts.joined(separator: "; "))
+    }
+
+    /// Per-utun counters as the kernel reports them.
+    ///
+    /// Several entries can describe the same interface (one per address
+    /// family); `if_data` carries the same totals in each, so the last one
+    /// wins.
+    private static func read() -> [String: Counters] {
+        var result: [String: Counters] = [:]
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0 else { return result }
+        defer { freeifaddrs(list) }
+        var cursor = list
+        while let entry = cursor {
+            defer { cursor = entry.pointee.ifa_next }
+            guard let namePointer = entry.pointee.ifa_name else { continue }
+            let name = String(cString: namePointer)
+            guard name.hasPrefix("utun") else { continue }
+            guard let dataPointer = entry.pointee.ifa_data else { continue }
+            let data = dataPointer
+                .assumingMemoryBound(to: if_data.self)
+                .pointee
+            result[name] = Counters(
+                receivedPackets: data.ifi_ipackets,
+                sentPackets: data.ifi_opackets,
+                receivedBytes: data.ifi_ibytes,
+                sentBytes: data.ifi_obytes)
+        }
+        return result
     }
 }

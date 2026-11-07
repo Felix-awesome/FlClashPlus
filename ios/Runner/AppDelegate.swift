@@ -391,6 +391,13 @@ import NetworkExtension
                 // core only hijacks DNS on that second address.
                 "dns": args["dns"] as? String ?? "198.18.0.2",
             ]
+            // The MTU is a user setting now. Leaving it out of this handover
+            // made the extension's own default (9000) the only value the tunnel
+            // could ever get, so changing it under TUN settings changed
+            // nothing on iOS.
+            if let mtu = args["mtu"] as? NSNumber, mtu.intValue > 0 {
+                providerConfig["mtu"] = mtu.intValue
+            }
             // Leave the key out when the caller has no home dir: the extension
             // treats a missing key as "use the App Group container", but an
             // empty string would be taken literally as its data path.
@@ -464,17 +471,52 @@ import NetworkExtension
             // reads "running" would trust a tunnel whose core is gone. The
             // provider's heartbeat file is the ground truth, so it is reported
             // separately and the Dart side can act on it.
-            let alive = connected && Self.providerIsAlive()
+            //
+            // "unknown" (no readable heartbeat) is reported as alive on
+            // purpose: it means the shared container is unreadable, and on a
+            // sideloaded build that is the normal case rather than a dead
+            // provider. Treating it as dead tore down live tunnels in a loop,
+            // so the status the system reports is the better answer there.
+            let liveness = Self.providerLiveness()
+            let alive = connected && !liveness.isDead
             result([
                 "connected": connected,
                 "connecting": connecting,
                 "running": connected || connecting,
                 "providerAlive": alive,
+                "providerHeartbeat": liveness.name,
             ])
         }
     }
 
     // MARK: - Start / Stop
+
+    /// What the provider's heartbeat file says about the process behind the
+    /// tunnel. `unknown` is a distinct answer from `dead`: it means the file
+    /// cannot be read at all (no shared container, or a provider that never got
+    /// far enough to touch it), which is not evidence that the process is gone.
+    private enum ProviderLiveness {
+        case alive
+        case dead
+        case unknown
+
+        var name: String {
+            switch self {
+            case .alive: return "alive"
+            case .dead: return "dead"
+            case .unknown: return "unknown"
+            }
+        }
+
+        /// Only a heartbeat that exists and has gone stale proves the provider
+        /// is gone. An unreadable one is not evidence either way.
+        var isDead: Bool {
+            switch self {
+            case .dead: return true
+            case .alive, .unknown: return false
+            }
+        }
+    }
 
     /// Whether the provider process is still alive, judged by the mtime of the
     /// "alive" file it refreshes every few seconds while its core is up.
@@ -486,15 +528,24 @@ import NetworkExtension
     /// live provider never goes silent for this long.
     private static let aliveGrace: TimeInterval = 15
 
-    private static func providerIsAlive() -> Bool {
-        guard let home = groupHomeDir() else { return false }
+    private static func providerLiveness() -> ProviderLiveness {
+        // No container means the heartbeat cannot be read *or* written. The
+        // extension falls back to its own container in that case
+        // (PacketTunnelProvider logs "container is unavailable"), so the file
+        // this side looks at will never exist -- and answering "dead" made the
+        // app stop and restart a tunnel that was carrying traffic fine.
+        guard let home = groupHomeDir() else { return .unknown }
         let url = URL(fileURLWithPath: home).appendingPathComponent("alive.txt")
         guard let attributes = try? FileManager.default.attributesOfItem(
             atPath: url.path),
             let modified = attributes[.modificationDate] as? Date else {
-            return false
+            return .unknown
         }
-        return Date().timeIntervalSince(modified) < aliveGrace
+        return Date().timeIntervalSince(modified) < aliveGrace ? .alive : .dead
+    }
+
+    private static func providerIsAlive() -> Bool {
+        !providerLiveness().isDead
     }
 
     private func start(_ result: @escaping FlutterResult, attempt: Int = 0) {

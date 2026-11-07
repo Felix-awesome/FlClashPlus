@@ -165,6 +165,10 @@ class IOSService {
     // address itself. The extension derives it again from `address`, so this
     // is only the value handed to the platform channel for the saved config.
     String dns = '198.18.0.2',
+    // Forwarded into providerConfiguration. The extension clamps it to the
+    // range utun accepts; leaving it out used to pin every iOS tunnel to 9000
+    // no matter what the TUN settings said.
+    int? mtu,
     Map<String, Object?> options = const {},
   }) async {
     final saved = await _call(
@@ -173,6 +177,7 @@ class IOSService {
         'stack': stack,
         'address': address,
         'dns': dns,
+        'mtu': ?mtu,
         'options': options,
       }),
     );

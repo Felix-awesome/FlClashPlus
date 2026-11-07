@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/process"
@@ -22,6 +23,7 @@ import (
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/listener/sing_tun"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/tunnel/statistic"
 )
 
 type TunCallbacks interface {
@@ -216,6 +218,8 @@ func handleStartTun(callbacks TunCallbacks, fd int, stack, address, dns, options
 	if tunHandler.start(fd, stack, address, dns, options) {
 		bootLog("tun live (stack=%s address=%s dns=%s)", stack, address, dns)
 		logOutboundInterface()
+		forwardCoreLogs()
+		reportTunnelTraffic()
 		return true
 	}
 	// start() already cleared the handler, so nothing protects sockets from
@@ -243,6 +247,15 @@ func logOutboundInterface() {
 		return
 	}
 	name := finder.FindInterfaceName(netip.MustParseAddr("1.1.1.1"))
+	// sing_tun's monitor answers "<invalid>" when it cannot name a carrier, and
+	// dialer turns that into a bind on a name the kernel rejects: every dial
+	// then fails with EADDRNOTAVAIL, which from the app looks like every proxy
+	// being dead. Recording it as its own line keeps that from being mistaken
+	// for an ordinary interface choice.
+	if name == "" || name == "<invalid>" {
+		bootLog("outbound interface: the finder answered %q; outbound sockets will not be bound", name)
+		return
+	}
 	bootLog("outbound interface: %q", name)
 	// An interface can be up, have an IPv4 address and still carry no internet
 	// (a captive Wi-Fi while the device uses cellular, for instance). The name
@@ -260,6 +273,97 @@ func logOutboundInterface() {
 	} else {
 		bootLog("outbound interface lookup failed: %v", err)
 	}
+}
+
+const (
+	// How often the core reports what it carried. Long enough to stay out of
+	// the log's way, short enough that a user's "test this node" attempt lands
+	// inside a window.
+	trafficReportInterval = 15 * time.Second
+
+	// Bounds the echoed warnings so a burst cannot stall mihomo's log path:
+	// Emit blocks once a subscriber's buffer fills, and it holds the mutex
+	// every other subscriber shares.
+	coreLogBuffer = 64
+)
+
+var (
+	startTrafficReport  sync.Once
+	startCoreLogForward sync.Once
+)
+
+// reportTunnelTraffic records once per interval how much the core carried and
+// how many connections it holds.
+//
+// Together with the utun counters the extension logs (see TunnelTrafficMonitor
+// in VpnCore.swift) this separates the two ways a live tunnel carries nothing:
+//
+//   - the utun counts packets while these numbers stay at +0.0 KiB: the core is
+//     reading a descriptor the system is not feeding, i.e. a stale utun picked
+//     from the fd table, and nothing ever reaches the tunnel.
+//   - neither side counts anything: the packets never enter the utun at all,
+//     so the problem is the routes/DNS the extension installed, not the fd.
+func reportTunnelTraffic() {
+	if runtime.GOOS != "ios" {
+		return
+	}
+	startTrafficReport.Do(func() {
+		go func() {
+			lastUp, lastDown := statistic.DefaultManager.Total()
+			for {
+				time.Sleep(trafficReportInterval)
+				up, down := statistic.DefaultManager.Total()
+				active := 0
+				statistic.DefaultManager.Range(func(statistic.Tracker) bool {
+					active++
+					return true
+				})
+				bootLog("traffic: +%.1f KiB up / +%.1f KiB down in %s, %d active, %.1f KiB total",
+					float64(up-lastUp)/1024,
+					float64(down-lastDown)/1024,
+					trafficReportInterval,
+					active,
+					float64(up+down)/1024,
+				)
+				lastUp, lastDown = up, down
+			}
+		}()
+	})
+}
+
+// forwardCoreLogs echoes mihomo's warnings and errors into the startup log.
+//
+// The core writes its own output to stdout, which a sideloaded extension never
+// shows anyone. The lines that matter most for this failure are exactly the
+// ones logged there: the "<invalid>" interface answer, dial errors, and the
+// silent fall back to a default config.
+//
+// Delivery is deliberately lossy. A dropped line costs one line; a blocking
+// write here would stall every other subscriber of mihomo's log, which
+// includes its own API.
+func forwardCoreLogs() {
+	if runtime.GOOS != "ios" {
+		return
+	}
+	startCoreLogForward.Do(func() {
+		queue := make(chan string, coreLogBuffer)
+		go func() {
+			for line := range queue {
+				bootLog("%s", line)
+			}
+		}()
+		go func() {
+			for event := range log.Subscribe() {
+				if event.LogLevel < log.WARNING {
+					continue
+				}
+				select {
+				case queue <- event.LogLevel.String() + ": " + event.Payload:
+				default:
+				}
+			}
+		}()
+	})
 }
 
 var (

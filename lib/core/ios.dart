@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/plugins/ios_service.dart';
+import 'package:fl_clash/providers/config.dart';
+import 'package:fl_clash/state.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'desktop/model.dart';
@@ -88,7 +90,20 @@ class CoreIOS extends CoreHandlerInterface {
     // user would instead get a core-call timeout that says nothing about the
     // real cause.
     final homeDir = await appPath.homeDirPath;
-    final saved = await _service?.saveConfig(homeDir: homeDir) ?? false;
+    // The tunnel's MTU is a user setting, and the extension used to have no
+    // way to learn it. Hand it over with the rest of the provider config. The
+    // extension still clamps the value, so an out-of-range one cannot make
+    // setTunnelNetworkSettings reject the whole session.
+    int? tunMtu;
+    try {
+      tunMtu = globalState.container.read(patchClashConfigProvider).tun.mtu;
+    } catch (_) {
+      // Unit tests build CoreIOS.scoped() without a provider container.
+      // Omitting the key leaves the extension on its 9000 default.
+      tunMtu = null;
+    }
+    final saved =
+        await _service?.saveConfig(homeDir: homeDir, mtu: tunMtu) ?? false;
     if (!saved) {
       throw StateError('iOS VPN configuration was not saved');
     }

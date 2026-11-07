@@ -31,6 +31,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// that will never become ready.
     private var bootFailed = false
 
+    /// Samples the kernel's per-utun counters while the core is live, so a
+    /// tunnel that is up but carrying nothing can be told apart from one whose
+    /// packets never arrive (see TunnelTrafficMonitor).
+    private var traffic: TunnelTrafficMonitor?
+
     /// Fails startTunnel with a message that survives the failure.
     private func fail(
         _ code: Int,
@@ -107,7 +112,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         let stack = providerConfig["stack"] as? String ?? "gvisor"
         let address = providerConfig["address"] as? String ?? "198.18.0.1/30"
-        let mtu = (providerConfig["mtu"] as? NSNumber)?.intValue ?? 9000
+        let mtu = Self.tunnelMtu(providerConfig["mtu"])
 
         guard let parsed = Self.splitCIDR(address) else {
             fail(1, "invalid tunnel address: " + address,
@@ -192,6 +197,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     tunnelProvider: self
                 )
                 BootLog.write("core boot finished: tun live")
+                // The core owns the descriptor from here on, so the only
+                // remaining witness of the data path is the kernel's own view
+                // of the utun. Starting the sampler now means the first sample
+                // lands in the log the app reads back after a failed test.
+                let monitor = TunnelTrafficMonitor()
+                self.traffic = monitor
+                monitor.start(reason: "core live")
             } catch {
                 self.bootFailed = true
                 self.lastStartError = error.localizedDescription
@@ -214,6 +226,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 core.stop()
             }
         }
+    }
+
+    /// The tunnel MTU, clamped to a range the system accepts.
+    ///
+    /// The value travels from the app's TUN settings now instead of being
+    /// fixed at 9000 here. A nonsensical one (0, negative, or larger than what
+    /// utun takes) makes `setTunnelNetworkSettings` fail, and with it the whole
+    /// tunnel -- so it is bounded at the boundary rather than trusted. 9000
+    /// stays the default because that is what Hiddify and sing-box use for the
+    /// same setup.
+    private static func tunnelMtu(_ value: Any?) -> Int {
+        let requested = (value as? NSNumber)?.intValue ?? 9000
+        let clamped = min(max(requested, 1280), 9000)
+        if clamped != requested {
+            BootLog.write("mtu \(requested) is out of range; using \(clamped)")
+        }
+        return clamped
     }
 
     /// Builds the tunnel's network settings: the interface address, the
@@ -302,6 +331,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         CoreBridge.shared.stop()
         heartbeat?.cancel()
         heartbeat = nil
+        traffic?.stop()
+        traffic = nil
         vpnCore?.stop()
         vpnCore = nil
         completionHandler()
