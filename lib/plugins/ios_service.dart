@@ -316,6 +316,38 @@ class IOSService {
       method: call.method,
     );
   }
+
+  /// The core events the extension appended since [offset].
+  ///
+  /// The core pushes connection and DNS records from inside the extension
+  /// process, where the app cannot reach them; the extension appends them to a
+  /// file in the shared container instead (see CoreEventSink). Returns null when
+  /// the channel is unavailable, so one failed poll costs a tick rather than
+  /// ending the stream.
+  Future<CoreEventBatch?> readEvents(int offset) async {
+    final reply = await _call(
+      () => vpnChannel.invokeMapMethod<String, Object?>('readEvents', {
+        'offset': offset,
+      }),
+    );
+    if (reply == null) {
+      return null;
+    }
+    final data = reply['data'];
+    return CoreEventBatch(
+      offset: (reply['offset'] as num?)?.toInt() ?? 0,
+      data: data is List ? data.whereType<String>().toList() : const [],
+    );
+  }
+}
+
+/// One poll of the extension's event file: the offset to resume from, and the
+/// complete records that were appended since the previous one.
+class CoreEventBatch {
+  const CoreEventBatch({required this.offset, required this.data});
+
+  final int offset;
+  final List<String> data;
 }
 
 IOSService? get iosService => system.isIOS ? IOSService() : null;

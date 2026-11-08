@@ -109,6 +109,45 @@ import NetworkExtension
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// Reads the core events the extension appended since `offset`.
+    ///
+    /// The extension writes one JSON document per line (see CoreEventSink). Only
+    /// whole lines come back: the last one may still be growing when the app
+    /// polls, and consuming half a record would drop that event for good. A file
+    /// shorter than the offset means the extension restarted and recreated it,
+    /// so the reader starts over instead of reading nothing.
+    static func readEvents(from offset: Int) -> [String: Any] {
+        let empty: [String: Any] = ["offset": 0, "data": [String]()]
+        guard let home = groupHomeDir() else { return empty }
+        let path = (home as NSString).appendingPathComponent("events.jsonl")
+        guard let handle = FileHandle(forReadingAtPath: path) else { return empty }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return empty }
+        var start = UInt64(max(0, offset))
+        if start > size {
+            start = 0
+        }
+        do {
+            try handle.seek(toOffset: start)
+            guard let data = try handle.readToEnd(), !data.isEmpty else {
+                return ["offset": Int(start), "data": [String]()]
+            }
+            guard let newline = data.lastIndex(of: 0x0A) else {
+                // Nothing complete yet: keep the offset so the next poll reads
+                // the whole record instead of its tail.
+                return ["offset": Int(start), "data": [String]()]
+            }
+            let complete = data[data.startIndex...newline]
+            let text = String(decoding: complete, as: UTF8.self)
+            let lines = text
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .map(String.init)
+            return ["offset": Int(start) + complete.count, "data": lines]
+        } catch {
+            return ["offset": Int(start), "data": [String]()]
+        }
+    }
+
     // MARK: - App-side log
 
     private static let logQueue = DispatchQueue(label: "com.follow.clash.applog")
@@ -282,6 +321,9 @@ import NetworkExtension
             result(Self.groupHomeDir())
         case "getBootLog":
             result(Self.bootLogTail())
+        case "readEvents":
+            let args = call.arguments as? [String: Any] ?? [:]
+            result(Self.readEvents(from: (args["offset"] as? NSNumber)?.intValue ?? 0))
         case "getFullBootLog":
             result(Self.fullBootLog())
         case "getDiagnostics":

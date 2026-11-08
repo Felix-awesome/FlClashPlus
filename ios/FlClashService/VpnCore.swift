@@ -47,6 +47,12 @@ final class VpnCore {
     private let mtu: Int
     private var started = false
 
+    /// Appends the core's event stream (connections, DNS queries) to the shared
+    /// container. The app runs in a different process and has no other way to
+    /// learn about them: `sendProviderMessage` does not reach this extension on
+    /// the device (see CoreBridge), and the gomobile callback fires here.
+    private var eventSink: CoreEventSink?
+
     /// Publishes the system's active physical interface to the Go core, so its
     /// outbound sockets are bound to the real NIC (Hiddify's
     /// startDefaultInterfaceMonitor, carried over a shared file).
@@ -97,6 +103,16 @@ final class VpnCore {
         // The core reads GEOIP/GEOSITE while it loads its first config, which
         // happens here and not on the app's schedule.
         ensureGeoData()
+
+        // Register the event sink before the core applies its first config:
+        // `hasEventListener` gates the hooks that produce connection and DNS
+        // records, so a sink registered after QuickSetup would miss everything
+        // the first config loads. The app polls the file this writes.
+        let sink = CoreEventSink(
+            url: URL(fileURLWithPath: homeDir).appendingPathComponent("events.jsonl"))
+        sink.open()
+        eventSink = sink
+        MobileSetEventListener(sink)
 
         // JSON is produced by JSONSerialization rather than string literals so
         // there is no hand-rolled escaping to get wrong.
@@ -210,6 +226,9 @@ final class VpnCore {
     func stop() {
         isReady = false
         lastError = ""
+        MobileSetEventListener(nil)
+        eventSink?.close()
+        eventSink = nil
         interfaceMonitor?.stop()
         interfaceMonitor = nil
         if started {
@@ -655,5 +674,88 @@ final class TunnelTrafficMonitor {
                 sentBytes: data.ifi_obytes)
         }
         return result
+    }
+}
+
+/// Appends the core's event stream to a file the app polls.
+///
+/// `MobileSetEventListener` delivers `{"method":"message","arguments":[...]}`
+/// documents from the core's own goroutines. They are written here, one per
+/// line, because the app is a separate process: the extension cannot call into
+/// it, and `sendProviderMessage` is not usable on the device (see CoreBridge).
+///
+/// The file is capped and trimmed from the front, keeping whole lines: a
+/// reader that finds the file shorter than its offset starts over instead of
+/// reading a torn record.
+final class CoreEventSink: NSObject, MobileResultHandlerProtocol, @unchecked Sendable {
+    /// Above this the file is trimmed back to [keepBytes].
+    private static let maxBytes = 4 * 1024 * 1024
+    private static let keepBytes = 1024 * 1024
+
+    private let url: URL
+    private let queue = DispatchQueue(label: "com.follow.clash.core.events")
+    private var handle: FileHandle?
+
+    init(url: URL) {
+        self.url = url
+        super.init()
+    }
+
+    /// Starts a fresh file: records from a previous session describe a tunnel
+    /// the app has already moved on from.
+    func open() {
+        queue.sync {
+            try? handle?.close()
+            handle = nil
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            handle = try? FileHandle(forWritingTo: url)
+        }
+    }
+
+    func close() {
+        queue.sync {
+            try? handle?.close()
+            handle = nil
+        }
+    }
+
+    func onResult(_ data: Data?) throws {
+        guard let data = data, !data.isEmpty else { return }
+        queue.async { [weak self] in
+            self?.append(data)
+        }
+    }
+
+    private func append(_ data: Data) {
+        guard let handle = handle else { return }
+        var payload = data
+        if payload.last != 0x0A {
+            payload.append(0x0A)
+        }
+        do {
+            let end = try handle.seekToEnd()
+            try handle.write(contentsOf: payload)
+            if end + UInt64(payload.count) > Self.maxBytes {
+                trim()
+            }
+        } catch {
+            self.handle = nil
+        }
+    }
+
+    /// Drops the oldest records, keeping the newest whole lines.
+    private func trim() {
+        guard let contents = try? Data(contentsOf: url) else { return }
+        let tail = contents.suffix(Self.keepBytes)
+        guard let newline = tail.firstIndex(of: 0x0A) else { return }
+        let kept = tail[tail.index(after: newline)...]
+        try? handle?.close()
+        handle = nil
+        do {
+            try Data(kept).write(to: url)
+            handle = try FileHandle(forWritingTo: url)
+        } catch {
+            handle = nil
+        }
     }
 }

@@ -29,6 +29,10 @@ void main() {
     service = _MockIOSService();
     core = CoreIOS.scoped(service);
     CoreIOS.resetInstance();
+    // start() brings up the event pump, which polls the extension's event file
+    // on a timer. These tests exercise the call path, not the pump, so the poll
+    // answers "nothing new".
+    when(() => service.readEvents(any())).thenAnswer((_) async => null);
   });
 
   group('lifecycle', () {

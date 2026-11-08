@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -8,6 +9,7 @@ import 'package:fl_clash/state.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'desktop/model.dart';
+import 'event.dart';
 import 'interface.dart';
 import 'method.dart';
 import 'spill.dart';
@@ -42,6 +44,15 @@ class CoreIOS extends CoreHandlerInterface {
   int _methodCallId = 0;
   bool _closed = false;
 
+  /// Polls the extension's event file. The core pushes connection and DNS
+  /// records from inside the packet-tunnel process, so the only way they reach
+  /// this one is through the shared container (see CoreEventSink). There was no
+  /// such reader before, which is why both panels stayed empty on a tunnel that
+  /// was carrying traffic.
+  Timer? _eventPump;
+  int _eventOffset = 0;
+  bool _draining = false;
+
   CoreIOS._internal() : _service = iosService;
 
   @visibleForTesting
@@ -72,6 +83,7 @@ class CoreIOS extends CoreHandlerInterface {
       // then answered "already running" for the rest of the session, so a
       // dropped tunnel could not be started again without relaunching the app.
       if (await (_service?.getStatus() ?? false)) {
+        _ensureEventPump();
         return CoreLifecycleResult(
           revision: revision,
           outcome: CoreLifecycleOutcome.coalesced,
@@ -112,6 +124,7 @@ class CoreIOS extends CoreHandlerInterface {
       throw StateError('iOS VPN tunnel failed to start');
     }
     _connectedCompleter.complete(true);
+    _ensureEventPump();
     return CoreLifecycleResult(
       revision: revision,
       outcome: CoreLifecycleOutcome.applied,
@@ -139,6 +152,7 @@ class CoreIOS extends CoreHandlerInterface {
       );
     }
     _connectedCompleter = Completer<bool>();
+    _stopEventPump();
     final stopped = await _service?.shutdown() ?? true;
     if (!stopped) {
       throw StateError('iOS VPN tunnel shutdown failed');
@@ -159,6 +173,83 @@ class CoreIOS extends CoreHandlerInterface {
     return _stop(allowClosed: true);
   }
 
+  /// Starts the event pump when it is not already running.
+  ///
+  /// Polling, not pushing: the core writes into the extension's process, and
+  /// the extension has no channel back to this one (`sendProviderMessage` never
+  /// arrives on the device, see CoreBridge). 400ms is below the dashboard's
+  /// refresh interval, and an idle poll is one file read.
+  void _ensureEventPump() {
+    if (_eventPump != null) {
+      return;
+    }
+    _eventOffset = 0;
+    _eventPump = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      unawaited(_drainEvents());
+    });
+  }
+
+  void _stopEventPump() {
+    _eventPump?.cancel();
+    _eventPump = null;
+    _eventOffset = 0;
+    _draining = false;
+  }
+
+  Future<void> _drainEvents() async {
+    if (_draining) {
+      return;
+    }
+    _draining = true;
+    try {
+      final service = _service;
+      if (service == null) {
+        return;
+      }
+      final batch = await service.readEvents(_eventOffset);
+      if (batch == null) {
+        return;
+      }
+      _eventOffset = batch.offset;
+      for (final raw in batch.data) {
+        _dispatchCoreEvent(raw);
+      }
+    } catch (error) {
+      // One failed poll costs one tick: the extension may be restarting and the
+      // channel may not be installed yet. Ending the stream here would leave
+      // both panels empty for the rest of the session.
+      commonPrint.log(
+        'Unable to read core events: $error',
+        logLevel: LogLevel.warning,
+      );
+    } finally {
+      _draining = false;
+    }
+  }
+
+  /// Turns one line of the extension's event file into the same [CoreEvent] the
+  /// desktop and Android transports deliver.
+  void _dispatchCoreEvent(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return;
+      }
+      final call = CoreMethodCall.fromJson(Map<String, Object?>.from(decoded));
+      if (call.method != CoreMethod.message) {
+        return;
+      }
+      for (final event in coreEventsFromData(call.arguments)) {
+        coreEventManager.sendEvent(event);
+      }
+    } catch (error) {
+      commonPrint.log(
+        'Unable to parse a core event: $error',
+        logLevel: LogLevel.error,
+      );
+    }
+  }
+
   // On iOS the core runs inside the packet-tunnel extension, and the Go core's
   // StartTun/StopTun already open/close the inbound listener automatically
   // (see core/lib.go). So unlike Android there is no separate listener command
@@ -176,11 +267,15 @@ class CoreIOS extends CoreHandlerInterface {
       if (!_connectedCompleter.isCompleted) {
         _connectedCompleter.complete(true);
       }
+      _ensureEventPump();
       return true;
     }
     final started = await _service?.start() ?? false;
     if (started && !_connectedCompleter.isCompleted) {
       _connectedCompleter.complete(true);
+    }
+    if (started) {
+      _ensureEventPump();
     }
     return started;
   }

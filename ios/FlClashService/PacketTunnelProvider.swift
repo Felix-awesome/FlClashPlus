@@ -280,13 +280,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "128.0.0.0"),
             NEIPv4Route.default(),
         ]
-        // Punch the two lowest addresses out of the default route, as Hiddify
-        // does with excludeDefaultRoute: iOS uses them while an interface
-        // comes up, and a default route with no hole here can be judged
-        // "no network available".
-        ipv4.excludedRoutes = [
-            NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "255.255.255.254"),
-        ]
+        // No hole in the default route: Hiddify punches 0.0.0.0/31 out only
+        // when `excludeDefaultRoute` is turned on, and its default profile
+        // leaves the route whole. Keeping the hole here meant NetworkExtension
+        // never saw a complete default route, so the session came up without
+        // the VPN badge even though traffic was flowing.
+        ipv4.excludedRoutes = []
         settings.ipv4Settings = ipv4
 
         let dnsSettings = NEDNSSettings(servers: [dns])
