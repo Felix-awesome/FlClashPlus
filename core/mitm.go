@@ -123,25 +123,30 @@ func handleUpdateMitmRules(params *UpdateMitmRulesParams) error {
 		return fmt.Errorf("missing update-mitm-rules params")
 	}
 
-	rules, errs := mitm.ParseRules(params.Rules)
+	parsed, errs := mitm.Parse(params.Rules)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			log.Warnln("[MITM] %v", e)
 		}
 	}
 	set := mitm.NewSet()
-	set.Replace(rules)
+	set.Replace(parsed.Rules)
+	// A pasted Quantumult X configuration carries its interception allow-list
+	// in a "[mitm]" section; honouring it keeps such a file working unchanged.
+	set.SetHostnames(parsed.Hostnames)
 
 	// Wire the Quantumult X script engine, resolving script references (URL or
 	// local name) against the scripts bundled with this update. Without any
 	// scripts the engine is left unset and only fixed rewrite actions run.
+	var engine *mitm.ScriptEngine
+	var loader mitm.ScriptLoader
 	if len(params.Scripts) > 0 {
-		engine := &mitm.ScriptEngine{}
-		loader := func(ref string) string {
+		engine = &mitm.ScriptEngine{}
+		loader = func(ref string) string {
 			return params.Scripts[ref]
 		}
-		mitm.SetScriptEngine(engine, loader)
 	}
+	mitm.SetScriptEngine(engine, loader)
 
 	mitmRuleSet = set
 	mitmInited = true
@@ -151,6 +156,9 @@ func handleUpdateMitmRules(params *UpdateMitmRulesParams) error {
 		}
 	}
 	mitm.Enable(mitmEnabled, mitmCA, set)
-	log.Infoln("[MITM] installed %d rewrite rules (%d scripts)", len(rules), len(params.Scripts))
+	log.Infoln(
+		"[MITM] installed %d rewrite rules (%d scripts, %d intercepted hosts)",
+		len(parsed.Rules), len(params.Scripts), len(parsed.Hostnames),
+	)
 	return nil
 }
