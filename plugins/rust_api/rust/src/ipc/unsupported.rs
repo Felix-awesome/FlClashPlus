@@ -1,7 +1,8 @@
 use super::EventSink;
 use std::io;
 
-// Android loads the Core in-process; this keeps one set of bindings for every platform.
+// Android loads the Core in-process and iOS keeps it in the Network Extension;
+// this keeps one set of bindings for every platform.
 pub struct Server;
 
 fn unsupported() -> io::Error {

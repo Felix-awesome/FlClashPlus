@@ -63,16 +63,24 @@ run() {
 }
 
 # The Go core is already built as FlClashCore.xcframework (gomobile bind), and
-# the iOS core talks to the app over MethodChannel -- the desktop/Android
-# native assets (setup's Go build, rust_api's IPC/rquickjs) are not needed on
-# iOS. Skip both hooks up front so the first `flutter create`/`pub get` already
-# resolves against the final pubspec (avoiding a mid-script pubspec change that
-# would force `flutter build ios` to re-resolve dependencies).
-# NOTE: use sed (a plain text substitution) rather than yq. yq re-serializes the
+# the iOS core talks to the app over MethodChannel -- setup's Go build is not
+# needed on iOS. rust_api still is: it carries the code editor's text buffers.
+# Skip only the setup hook up front so the first `flutter create`/`pub get`
+# already resolves against the final pubspec (avoiding a mid-script pubspec
+# change that would force `flutter build ios` to re-resolve dependencies).
+# NOTE: edit the text rather than round-trip the YAML. yq re-serializes the
 # whole file through a YAML-1.1 parser, which can rewrite scalar values (e.g.
 # 'none', 'on'/'off') and silently break the pubspec for pub.
-sed -i.bak 's/^\([[:space:]]*\)build_assets: true$/\1build_assets: false/' pubspec.yaml
-rm -f pubspec.yaml.bak
+python3 - <<'PY'
+import pathlib
+
+path = pathlib.Path('pubspec.yaml')
+text = path.read_text()
+needle = "    setup:\n      build_assets: true"
+if needle not in text:
+    raise SystemExit('pubspec.yaml has no setup hook to skip')
+path.write_text(text.replace(needle, "    setup:\n      build_assets: false", 1))
+PY
 
 echo "=== [1/7] Ensure Flutter iOS project skeleton ==="
 BACKUP_DIR="$(mktemp -d)"

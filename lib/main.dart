@@ -36,11 +36,20 @@ void main(List<String> args) {
         });
       };
       try {
-        // The Rust FFI library (IPC server + rquickjs) is desktop/Android-only;
-        // on iOS the core runs inside the NetworkExtension and talks over
-        // MethodChannel, so there is no Rust library to load.
-        if (!Platform.isIOS) {
+        // The Rust library carries the editor's text buffers on every platform,
+        // plus the IPC server and global hotkeys on the desktop. iOS builds the
+        // editor half only, so a library that fails to load there costs the
+        // editor and nothing else.
+        try {
           await RustLib.init();
+        } catch (e) {
+          if (!Platform.isIOS) {
+            rethrow;
+          }
+          commonPrint.log(
+            'the editor library is unavailable: $e',
+            logLevel: LogLevel.warning,
+          );
         }
         final version = await system.init();
         final container = await bootstrap.init(version);
