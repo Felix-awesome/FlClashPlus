@@ -978,6 +978,23 @@
   "mitmCertificateDesc": "Copy the root certificate to install and trust on this device.",
   "mitmCaInstallHint": "Install and trust the CA certificate so intercepted HTTPS requests do not show a warning. On Android 7+ install it into the user certificate store.",
   "mitmCertCopied": "Certificate copied to clipboard",
-  "mitmCertError": "Failed to get certificate"
+  "mitmCertError": "Failed to get certificate",
+  "mitmRuleSourceNeverFetched": "Ещё не загружено",
+  "mitmRuleSourceFetchFailed": "Не удалось загрузить {name}; по-прежнему используются последние полученные правила",
+  "mitmRuleSourceAdded": "{name} добавлен",
+  "mitmRuleSourcesFailed": "{count, plural, =1{1 набор правил не удалось обновить} other{{count} наборов правил не удалось обновить}}",
+  "mitmRuleSourceEmpty": "Этот набор правил не содержит правил перезаписи",
+  "mitmRulesLocal": "Локальные правила",
+  "mitmRuleTypeReject": "Блокировать",
+  "mitmRuleTypeRedirect": "Перенаправление",
+  "mitmRuleTypeEcho": "Локальный ответ",
+  "mitmRuleTypeRequestHeader": "Заголовок запроса",
+  "mitmRuleTypeResponseHeader": "Заголовок ответа",
+  "mitmRuleTypeRequestBody": "Тело запроса",
+  "mitmRuleTypeResponseBody": "Тело ответа",
+  "mitmRuleTypeJson": "Перезапись JSON",
+  "mitmRuleTypeScript": "Скрипт",
+  "mitmRuleTypeOther": "Не распознано",
+  "mitmRuleInvalid": "Эта версия не может выполнить это правило"
 
 }

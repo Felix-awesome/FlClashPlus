@@ -16,36 +16,158 @@ hostname = api.weibo.cn, mapi.weibo.com,
 ''';
 
 void main() {
-  group('parseRuleSourceUrls', () {
-    test('keeps one http url per line and drops everything else', () {
-      final urls = parseRuleSourceUrls('''
-# a comment
-https://raw.githubusercontent.com/Felix-awesome/Rules-For-Quantumult-X/refs/heads/develop/Rewrite/AdBlock/Weibo.conf
+  group('MitmRuleSource', () {
+    test('a stored entry round-trips its name, address and timestamp', () {
+      final source = MitmRuleSource(
+        name: 'Weibo',
+        url: 'https://example.com/Weibo.conf',
+        lastUpdateTime: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+      );
 
-  https://example.com/rules.conf
-https://raw.githubusercontent.com/Felix-awesome/Rules-For-Quantumult-X/refs/heads/develop/Rewrite/AdBlock/Weibo.conf
-ftp://example.com/rules.conf
-''');
+      final decoded = MitmRuleSource.decodeList(
+        MitmRuleSource.encodeList([source]),
+      );
 
-      expect(urls, [
-        'https://raw.githubusercontent.com/Felix-awesome/Rules-For-Quantumult-X/refs/heads/develop/Rewrite/AdBlock/Weibo.conf',
-        'https://example.com/rules.conf',
-      ]);
+      expect(decoded, hasLength(1));
+      expect(decoded.single.name, 'Weibo');
+      expect(decoded.single.url, source.url);
+      expect(decoded.single.lastUpdateTime, source.lastUpdateTime);
     });
 
-    test('an empty editor means no rule sets', () {
-      expect(parseRuleSourceUrls('  \n\n'), isEmpty);
+    test('a bare address is read as a rule set named after its file', () {
+      final decoded = MitmRuleSource.decodeList([
+        'https://raw.githubusercontent.com/user/rules/main/Rewrite/AdBlock/Weibo.conf',
+      ]);
+
+      expect(decoded.single.name, 'Weibo');
+      expect(decoded.single.lastUpdateTime, isNull);
+    });
+
+    test('an address that is not http(s) is dropped', () {
+      final decoded = MitmRuleSource.decodeList([
+        '',
+        'not a url',
+        'ftp://example.com/rules.conf',
+      ]);
+
+      expect(decoded, isEmpty);
+    });
+
+    test('the same address is kept once', () {
+      final decoded = MitmRuleSource.decodeList([
+        'https://example.com/rules.conf',
+        'https://example.com/rules.conf',
+      ]);
+
+      expect(decoded, hasLength(1));
+    });
+
+    test('a name is derived from the file, not the folder', () {
+      expect(
+        defaultRuleSourceName('https://example.com/a/b/AdBlock.conf'),
+        'AdBlock',
+      );
+      expect(
+        defaultRuleSourceName('https://example.com/a/b.conf?token=1'),
+        'b',
+      );
+      expect(
+        defaultRuleSourceName('https://example.com/rewrite/'),
+        'example.com',
+      );
+    });
+  });
+
+  group('parseMitmRules', () {
+    test('every action a rule set can carry is classified', () {
+      final entries = parseMitmRules(r'''
+^https?://a\.example/1 url reject
+^https?://a\.example/2 url 302 https://b.example/2
+^https?://a\.example/3 url request-header "X-A" "1"
+^https?://a\.example/4 url response-header "a" response-header "b"
+^https?://a\.example/5 url response-body "foo" response-body "bar"
+^https?://a\.example/6 url jsonjq-response-body '.data.ads'
+^https?://a\.example/7 url script-response-body https://cdn.example.com/a.js
+^https?://a\.example/8 url echo-response text/html echo-response answer.html
+''');
+
+      expect(entries.map((entry) => entry.kind), [
+        MitmRuleKind.reject,
+        MitmRuleKind.redirect,
+        MitmRuleKind.requestHeader,
+        MitmRuleKind.responseHeader,
+        MitmRuleKind.responseBody,
+        MitmRuleKind.jsonQuery,
+        MitmRuleKind.script,
+        MitmRuleKind.echo,
+      ]);
+      expect(entries[0].pattern, r'^https?://a\.example/1');
+      expect(entries[1].argument, 'https://b.example/2');
+      expect(entries[3].argument, '"a" → "b"');
+      expect(entries[4].argument, '"foo" → "bar"');
+      expect(entries[5].argument, '.data.ads');
+      expect(entries[6].argument, 'https://cdn.example.com/a.js');
+      expect(entries[7].argument, 'text/html · answer.html');
+      expect(entries.every((entry) => entry.valid), isTrue);
+    });
+
+    test('a url-and-header rule keeps the header expression apart', () {
+      final entries = parseMitmRules(
+        r'^https?://a\.example/i "User-Agent: Foo" url-and-header reject',
+      );
+
+      expect(entries, hasLength(1));
+      expect(entries.single.kind, MitmRuleKind.reject);
+      expect(entries.single.headerPattern, '"User-Agent: Foo"');
+    });
+
+    test('comments, section headers and settings are not rules', () {
+      final entries = parseMitmRules(r'''
+[rewrite_local]
+; ^https?://a\.example/1 url reject
+# ^https?://a\.example/2 url reject
+// ^https?://a\.example/3 url reject
+hostname = a.example, b.example,
+skip_validating_cert = true
+
+[filter_local]
+host, ads.example, reject
+''');
+
+      expect(entries, isEmpty);
+    });
+
+    test('an action this build cannot run is listed and marked', () {
+      final entries = parseMitmRules(
+        r'^https?://a\.example/1 url some-future-action x',
+      );
+
+      expect(entries.single.kind, MitmRuleKind.other);
+      expect(entries.single.valid, isFalse);
+    });
+
+    test('a redirect without a target is marked', () {
+      expect(
+        parseMitmRules(r'^https?://a\.example/1 url 302').single.valid,
+        isFalse,
+      );
     });
   });
 
   group('combineRuleSets', () {
     test('local rules come first, blank parts are skipped', () {
-      final rules = combineRuleSets('^https?://local\\.example/ad url reject', [
+      final rules = combineRuleSets(r'^https?://local\.example/ad url reject', [
         '',
         _weiboRuleSet,
       ]);
 
-      expect(rules, startsWith('^https?://local\\.example/ad url reject\n'));
+      expect(
+        rules,
+        startsWith(
+          r'^https?://local\.example/ad url reject'
+          '\n',
+        ),
+      );
       expect(rules, contains('hostname = api.weibo.cn'));
     });
 
@@ -55,7 +177,7 @@ ftp://example.com/rules.conf
       ]);
 
       expect(rules.startsWith('\uFEFF'), isFalse);
-      expect(rules, '^https?://example\\.com/a url reject');
+      expect(rules, r'^https?://example\.com/a url reject');
     });
 
     test('nothing configured means nothing to install', () {
@@ -63,7 +185,7 @@ ftp://example.com/rules.conf
     });
 
     test('a rule set without scripts needs no download', () async {
-      const plain = '^https?://ads\\.example/.* url reject';
+      const plain = r'^https?://ads\.example/.* url reject';
 
       final ruleSet = await buildMitmRuleSet('', [plain]);
 
@@ -105,23 +227,38 @@ ftp://example.com/rules.conf
       const url = 'https://example.com/Weibo.conf';
       await refreshRuleSets([url], fetch: (url) async => _weiboRuleSet);
 
-      final ruleSets = await refreshRuleSets(
-        [url],
+      final result = await fetchRuleSet(
+        url,
         fetch: (url) async {
           throw const SocketException('offline');
         },
       );
 
-      expect(ruleSets, [_weiboRuleSet]);
+      expect(result.ok, isFalse);
+      expect(result.content, _weiboRuleSet);
+    });
+
+    test('a successful download reports the fresh copy', () async {
+      const url = 'https://example.com/Weibo.conf';
+
+      final result = await fetchRuleSet(
+        url,
+        fetch: (url) async => _weiboRuleSet,
+      );
+
+      expect(result.ok, isTrue);
+      expect(result.content, _weiboRuleSet);
+      expect(await loadCachedRuleSet(url), _weiboRuleSet);
     });
 
     test('an empty answer never replaces the stored copy', () async {
       const url = 'https://example.com/Weibo.conf';
       await refreshRuleSets([url], fetch: (url) async => _weiboRuleSet);
 
-      final ruleSets = await refreshRuleSets([url], fetch: (url) async => '');
+      final result = await fetchRuleSet(url, fetch: (url) async => '');
 
-      expect(ruleSets, [_weiboRuleSet]);
+      expect(result.ok, isFalse);
+      expect(result.content, _weiboRuleSet);
     });
 
     test('the cached copies load without touching the network', () async {
@@ -132,9 +269,18 @@ ftp://example.com/rules.conf
       expect(await loadCachedRuleSets([stored, missing]), [_weiboRuleSet]);
     });
 
+    test('a deleted rule set takes its cached copy with it', () async {
+      const url = 'https://example.com/Weibo.conf';
+      await refreshRuleSets([url], fetch: (url) async => _weiboRuleSet);
+
+      await deleteRuleSetCache(url);
+
+      expect(await loadCachedRuleSet(url), isEmpty);
+    });
+
     test('a script is cached and used again when its cdn is down', () async {
       const rules =
-          '^https?://api\\.example/.* url script-response-body https://cdn.example.com/a.js';
+          r'^https?://api\.example/.* url script-response-body https://cdn.example.com/a.js';
 
       final first = await fetchMitmScripts(
         rules,
@@ -153,7 +299,7 @@ ftp://example.com/rules.conf
 
     test('a local script name is left for the core to resolve', () async {
       const rules =
-          '^https?://api\\.example/.* url script-request-header local.js';
+          r'^https?://api\.example/.* url script-request-header local.js';
 
       expect(await fetchMitmScripts(rules, fetch: (url) async => ''), isEmpty);
     });

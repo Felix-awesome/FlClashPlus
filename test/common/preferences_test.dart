@@ -1,12 +1,15 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:fl_clash/common/boot_record.dart';
 import 'package:fl_clash/common/constant.dart';
+import 'package:fl_clash/common/mitm.dart';
 import 'package:fl_clash/common/preferences.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../helpers/app_paths.dart';
 import '../helpers/preferences.dart';
 
 const _sharedState = SharedState(
@@ -162,6 +165,82 @@ void main() {
       await store.setString(bootRecordKey, 'not json');
 
       expect(await preferences.getBootRecord(), isNull);
+    });
+  });
+
+  group('mitm rule sources', () {
+    late Directory root;
+
+    setUp(() async {
+      // The refresh writes the downloaded copies to the app's directories, so
+      // they have to point at a temporary one rather than the platform's.
+      root = await Directory.systemTemp.createTemp('flclash_mitm_sources');
+      await useAppPaths(root);
+    });
+
+    tearDown(() async {
+      if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    });
+
+    test('nothing stored means no rule sets', () async {
+      expect(await preferences.getMitmRuleSources(), isEmpty);
+    });
+
+    test('saved rule sets keep their name and address', () async {
+      await preferences.saveMitmRuleSources(const [
+        MitmRuleSource(name: 'Weibo', url: 'https://example.com/Weibo.conf'),
+      ]);
+
+      final sources = await preferences.getMitmRuleSources();
+
+      expect(sources.single.name, 'Weibo');
+      expect(sources.single.url, 'https://example.com/Weibo.conf');
+    });
+
+    test('a bare address stored by an older build still loads', () async {
+      await store.setStringList(mitmRuleSourcesKey, [
+        'https://example.com/Ads.conf',
+      ]);
+
+      final sources = await preferences.getMitmRuleSources();
+
+      expect(sources.single.name, 'Ads');
+      expect(sources.single.lastUpdateTime, isNull);
+    });
+
+    test('a failed refresh keeps the timestamp it had', () async {
+      final time = DateTime.fromMillisecondsSinceEpoch(1700000000000);
+      await preferences.saveMitmRuleSources([
+        MitmRuleSource(
+          name: 'Weibo',
+          url: 'https://example.com/Weibo.conf',
+          lastUpdateTime: time,
+        ),
+      ]);
+
+      final updated = await preferences.refreshMitmRuleSources(
+        fetch: (url) async => throw const SocketException('offline'),
+      );
+
+      expect(updated, 0);
+      final sources = await preferences.getMitmRuleSources();
+      expect(sources.single.lastUpdateTime, time);
+    });
+
+    test('a refresh that answers stamps the rule set as current', () async {
+      await preferences.saveMitmRuleSources(const [
+        MitmRuleSource(name: 'Weibo', url: 'https://example.com/Weibo.conf'),
+      ]);
+
+      final updated = await preferences.refreshMitmRuleSources(
+        fetch: (url) async => r'^https?://a\.example/1 url reject',
+      );
+
+      expect(updated, 1);
+      final sources = await preferences.getMitmRuleSources();
+      expect(sources.single.lastUpdateTime, isNotNull);
     });
   });
 }

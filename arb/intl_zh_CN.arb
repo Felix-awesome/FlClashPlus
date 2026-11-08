@@ -978,6 +978,23 @@
   "mitmCertificateDesc": "复制根证书，在本机安装并信任。",
   "mitmCaInstallHint": "请安装并信任 CA 证书，否则被拦截的 HTTPS 请求会提示不受信任。Android 7+ 请安装到用户证书库。",
   "mitmCertCopied": "证书已复制到剪贴板",
-  "mitmCertError": "获取证书失败"
+  "mitmCertError": "获取证书失败",
+  "mitmRuleSourceNeverFetched": "尚未拉取",
+  "mitmRuleSourceFetchFailed": "拉取 {name} 失败，仍在沿用上次拉取到的规则",
+  "mitmRuleSourceAdded": "已添加 {name}",
+  "mitmRuleSourcesFailed": "{count, plural, =1{1 个规则集更新失败} other{{count} 个规则集更新失败}}",
+  "mitmRuleSourceEmpty": "该规则集不含重写规则",
+  "mitmRulesLocal": "本地规则",
+  "mitmRuleTypeReject": "拒绝",
+  "mitmRuleTypeRedirect": "重定向",
+  "mitmRuleTypeEcho": "本地响应",
+  "mitmRuleTypeRequestHeader": "请求头",
+  "mitmRuleTypeResponseHeader": "响应头",
+  "mitmRuleTypeRequestBody": "请求体",
+  "mitmRuleTypeResponseBody": "响应体",
+  "mitmRuleTypeJson": "JSON 改写",
+  "mitmRuleTypeScript": "脚本",
+  "mitmRuleTypeOther": "无法识别",
+  "mitmRuleInvalid": "当前版本无法执行该规则"
 
 }

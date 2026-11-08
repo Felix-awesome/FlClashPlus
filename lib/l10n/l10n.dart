@@ -8115,16 +8115,6 @@ class AppLocalizations {
     );
   }
 
-  /// `No remote rule sets`
-  String get mitmRuleSourcesEmpty {
-    return Intl.message(
-      'No remote rule sets',
-      name: 'mitmRuleSourcesEmpty',
-      desc: '',
-      args: [],
-    );
-  }
-
   /// `{count, plural, =1{1 address} other{{count} addresses}}`
   String mitmRuleSourcesCount(num count) {
     return Intl.plural(
@@ -8134,6 +8124,16 @@ class AppLocalizations {
       name: 'mitmRuleSourcesCount',
       desc: '',
       args: [count],
+    );
+  }
+
+  /// `No remote rule sets`
+  String get mitmRuleSourcesEmpty {
+    return Intl.message(
+      'No remote rule sets',
+      name: 'mitmRuleSourcesEmpty',
+      desc: '',
+      args: [],
     );
   }
 
@@ -8194,6 +8194,178 @@ class AppLocalizations {
     return Intl.message(
       'Failed to get certificate',
       name: 'mitmCertError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not fetched yet`
+  String get mitmRuleSourceNeverFetched {
+    return Intl.message(
+      'Not fetched yet',
+      name: 'mitmRuleSourceNeverFetched',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not fetch {name}; the rules it last delivered are still in use`
+  String mitmRuleSourceFetchFailed(Object name) {
+    return Intl.message(
+      'Could not fetch $name; the rules it last delivered are still in use',
+      name: 'mitmRuleSourceFetchFailed',
+      desc: '',
+      args: [name],
+    );
+  }
+
+  /// `Added {name}`
+  String mitmRuleSourceAdded(Object name) {
+    return Intl.message(
+      'Added $name',
+      name: 'mitmRuleSourceAdded',
+      desc: '',
+      args: [name],
+    );
+  }
+
+  /// `{count, plural, =1{1 rule set could not be updated} other{{count} rule sets could not be updated}}`
+  String mitmRuleSourcesFailed(num count) {
+    return Intl.plural(
+      count,
+      one: '1 rule set could not be updated',
+      other: '$count rule sets could not be updated',
+      name: 'mitmRuleSourcesFailed',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `This rule set carries no rewrite rules`
+  String get mitmRuleSourceEmpty {
+    return Intl.message(
+      'This rule set carries no rewrite rules',
+      name: 'mitmRuleSourceEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local rules`
+  String get mitmRulesLocal {
+    return Intl.message(
+      'Local rules',
+      name: 'mitmRulesLocal',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Block`
+  String get mitmRuleTypeReject {
+    return Intl.message(
+      'Block',
+      name: 'mitmRuleTypeReject',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Redirect`
+  String get mitmRuleTypeRedirect {
+    return Intl.message(
+      'Redirect',
+      name: 'mitmRuleTypeRedirect',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Local response`
+  String get mitmRuleTypeEcho {
+    return Intl.message(
+      'Local response',
+      name: 'mitmRuleTypeEcho',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Request header`
+  String get mitmRuleTypeRequestHeader {
+    return Intl.message(
+      'Request header',
+      name: 'mitmRuleTypeRequestHeader',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Response header`
+  String get mitmRuleTypeResponseHeader {
+    return Intl.message(
+      'Response header',
+      name: 'mitmRuleTypeResponseHeader',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Request body`
+  String get mitmRuleTypeRequestBody {
+    return Intl.message(
+      'Request body',
+      name: 'mitmRuleTypeRequestBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Response body`
+  String get mitmRuleTypeResponseBody {
+    return Intl.message(
+      'Response body',
+      name: 'mitmRuleTypeResponseBody',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `JSON rewrite`
+  String get mitmRuleTypeJson {
+    return Intl.message(
+      'JSON rewrite',
+      name: 'mitmRuleTypeJson',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Script`
+  String get mitmRuleTypeScript {
+    return Intl.message(
+      'Script',
+      name: 'mitmRuleTypeScript',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not recognized`
+  String get mitmRuleTypeOther {
+    return Intl.message(
+      'Not recognized',
+      name: 'mitmRuleTypeOther',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This build cannot run this rule`
+  String get mitmRuleInvalid {
+    return Intl.message(
+      'This build cannot run this rule',
+      name: 'mitmRuleInvalid',
       desc: '',
       args: [],
     );

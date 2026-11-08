@@ -77,16 +77,48 @@ class Preferences {
     }
   }
 
-  /// The remote rule sets the MITM rewrite pulls its rules from. One URL per
-  /// entry, in the order the core should match them.
-  Future<List<String>> getMitmRuleSources() async {
+  /// The remote rule sets the MITM rewrite pulls its rules from, in the order
+  /// the core should match them.
+  Future<List<MitmRuleSource>> getMitmRuleSources() async {
     final preferences = await _store.value;
-    return preferences?.getStringList(mitmRuleSourcesKey) ?? const [];
+    final raw = preferences?.getStringList(mitmRuleSourcesKey);
+    if (raw == null) return const [];
+    return MitmRuleSource.decodeList(raw);
   }
 
-  Future<void> saveMitmRuleSources(List<String> sources) async {
+  Future<void> saveMitmRuleSources(List<MitmRuleSource> sources) async {
     final preferences = await _store.value;
-    await preferences?.setStringList(mitmRuleSourcesKey, sources);
+    await preferences?.setStringList(
+      mitmRuleSourcesKey,
+      MitmRuleSource.encodeList(sources),
+    );
+  }
+
+  /// Fetches every configured rule set again and records the ones that
+  /// answered, returning how many did.
+  ///
+  /// A source that cannot be reached keeps the copy it had, timestamp
+  /// included: a failed download must not look like a newer rule set.
+  Future<int> refreshMitmRuleSources({
+    RemoteFetch fetch = downloadRemoteFile,
+  }) async {
+    final sources = await getMitmRuleSources();
+    if (sources.isEmpty) return 0;
+    final next = <MitmRuleSource>[];
+    var updated = 0;
+    for (final source in sources) {
+      final result = await fetchRuleSet(source.url, fetch: fetch);
+      if (!result.ok) {
+        next.add(source);
+        continue;
+      }
+      updated++;
+      next.add(source.copyWith(lastUpdateTime: DateTime.now()));
+    }
+    if (updated > 0) {
+      await saveMitmRuleSources(next);
+    }
+    return updated;
   }
 
   Future<Map<String, Object?>?> getConfigMap() async {

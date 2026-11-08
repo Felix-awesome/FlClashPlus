@@ -15,7 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'config/advanced.dart';
 import 'config/custom_resources.dart';
-import 'mitm.dart';
+import 'mitm/settings.dart';
 import 'developer.dart';
 import 'disclaimer.dart';
 import 'theme.dart';

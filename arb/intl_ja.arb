@@ -978,6 +978,23 @@
   "mitmCertificateDesc": "Copy the root certificate to install and trust on this device.",
   "mitmCaInstallHint": "Install and trust the CA certificate so intercepted HTTPS requests do not show a warning. On Android 7+ install it into the user certificate store.",
   "mitmCertCopied": "Certificate copied to clipboard",
-  "mitmCertError": "Failed to get certificate"
+  "mitmCertError": "Failed to get certificate",
+  "mitmRuleSourceNeverFetched": "未取得",
+  "mitmRuleSourceFetchFailed": "{name} を取得できませんでした。前回取得したルールを引き続き使用します",
+  "mitmRuleSourceAdded": "{name} を追加しました",
+  "mitmRuleSourcesFailed": "{count, plural, =1{1 件のルールセットを更新できませんでした} other{{count} 件のルールセットを更新できませんでした}}",
+  "mitmRuleSourceEmpty": "このルールセットに書き換えルールはありません",
+  "mitmRulesLocal": "ローカルルール",
+  "mitmRuleTypeReject": "ブロック",
+  "mitmRuleTypeRedirect": "リダイレクト",
+  "mitmRuleTypeEcho": "ローカル応答",
+  "mitmRuleTypeRequestHeader": "リクエストヘッダー",
+  "mitmRuleTypeResponseHeader": "レスポンスヘッダー",
+  "mitmRuleTypeRequestBody": "リクエストボディ",
+  "mitmRuleTypeResponseBody": "レスポンスボディ",
+  "mitmRuleTypeJson": "JSON 書き換え",
+  "mitmRuleTypeScript": "スクリプト",
+  "mitmRuleTypeOther": "判別不可",
+  "mitmRuleInvalid": "このバージョンではこのルールを実行できません"
 
 }

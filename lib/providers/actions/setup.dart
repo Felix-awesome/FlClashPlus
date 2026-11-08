@@ -815,7 +815,9 @@ class SetupAction extends _$SetupAction {
       // never waits on a subscription host, and a rule set that is slow or
       // unreachable right now still keeps the rules it had.
       final sources = await preferences.getMitmRuleSources();
-      final ruleSets = await loadCachedRuleSets(sources);
+      final ruleSets = await loadCachedRuleSets([
+        for (final source in sources) source.url,
+      ]);
       // Re-pull remote scripts referenced by script-* rules so the core can
       // run them after every (re)start of the core process.
       final ruleSet = await buildMitmRuleSet(appSetting.mitmRules, ruleSets);
@@ -833,9 +835,11 @@ class SetupAction extends _$SetupAction {
 
   /// Downloads the remote rule sets again and installs the result, so a
   /// subscription stays current without a manual refresh.
-  Future<void> _refreshMitmRuleSets(List<String> sources) async {
+  Future<void> _refreshMitmRuleSets(List<MitmRuleSource> sources) async {
     try {
-      final ruleSets = await refreshRuleSets(sources);
+      final ruleSets = await refreshRuleSets([
+        for (final source in sources) source.url,
+      ]);
       final ruleSet = await buildMitmRuleSet(
         ref.read(appSettingProvider).mitmRules,
         ruleSets,

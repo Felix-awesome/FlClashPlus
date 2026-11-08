@@ -978,6 +978,23 @@
   "mitmCertificateDesc": "Copy the root certificate to install and trust on this device.",
   "mitmCaInstallHint": "Install and trust the CA certificate so intercepted HTTPS requests do not show a warning. On Android 7+ install it into the user certificate store.",
   "mitmCertCopied": "Certificate copied to clipboard",
-  "mitmCertError": "Failed to get certificate"
+  "mitmCertError": "Failed to get certificate",
+  "mitmRuleSourceNeverFetched": "Aún sin descargar",
+  "mitmRuleSourceFetchFailed": "No se pudo descargar {name}; se siguen usando las últimas reglas recibidas",
+  "mitmRuleSourceAdded": "Se añadió {name}",
+  "mitmRuleSourcesFailed": "{count, plural, =1{1 conjunto de reglas no se pudo actualizar} other{{count} conjuntos de reglas no se pudieron actualizar}}",
+  "mitmRuleSourceEmpty": "Este conjunto de reglas no contiene reglas de reescritura",
+  "mitmRulesLocal": "Reglas locales",
+  "mitmRuleTypeReject": "Bloquear",
+  "mitmRuleTypeRedirect": "Redirección",
+  "mitmRuleTypeEcho": "Respuesta local",
+  "mitmRuleTypeRequestHeader": "Cabecera de solicitud",
+  "mitmRuleTypeResponseHeader": "Cabecera de respuesta",
+  "mitmRuleTypeRequestBody": "Cuerpo de solicitud",
+  "mitmRuleTypeResponseBody": "Cuerpo de respuesta",
+  "mitmRuleTypeJson": "Reescritura JSON",
+  "mitmRuleTypeScript": "Script",
+  "mitmRuleTypeOther": "No reconocida",
+  "mitmRuleInvalid": "Esta versión no puede ejecutar esta regla"
 
 }
