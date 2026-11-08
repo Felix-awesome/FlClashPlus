@@ -272,9 +272,26 @@ jobs:
           chmod +x gradlew
           # No JVM unit test loads the Core or the Flutter build, but `:core` compiles against
           # the gomobile AAR, so one ABI of it is built.
+          # The runner's step log cannot be read from outside the repo, so keep the output
+          # and report the failing lines as an annotation.
+          set -o pipefail
           ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest \
             -Ptarget-platform=android-arm64 \
-            -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
+            --stacktrace \
+            -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug \
+            2>&1 | tee "$GITHUB_WORKSPACE/gradle-test.log" || {
+              body="$(grep -nE -A 6 -B 2 'error:|FAILED|Caused by|What went wrong|Execution failed|Exception' "$GITHUB_WORKSPACE/gradle-test.log" | tail -200 | cut -c1-20000 | sed 's/%/%25/g; s/\r/%0D/g' | awk '{printf "%s%%0A", $0}')"
+              echo "::error::gradle unit tests failed%0A${body}"
+              exit 1
+            }
+
+      - name: Upload gradle log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-gradle-log
+          path: gradle-test.log
+          if-no-files-found: ignore
 
   rust:
     name: Rust
