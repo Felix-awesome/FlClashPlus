@@ -25,24 +25,24 @@ mkdir -p "$ROOT_DIR/dist"
 
 fail() {
   local label="$1"
-  local msg="iOS build failed at: ${label}"
+  # GitHub cuts an annotation message at 64 KiB, and the useful part of a
+  # verbose build log sits in the middle rather than at the end: report the
+  # error lines with their context first and keep the tail as a fallback, capped
+  # so nothing important is the part that gets cut.
+  local body=""
   if [ -f "$LOG_FILE" ]; then
-    # Emit the TAIL of the log plus any compiler/xcodebuild error lines. The
-    # real error is usually at the end, but flutter swallows xcodebuild output
-    # when the build dies very early, so also surface matched error keywords.
-    local detail tail_lines err_lines
-    tail_lines="$(tail -200 "$LOG_FILE")"
-    err_lines="$(grep -nE 'error:|fatal error:|BUILD FAILED|ld: |Undefined symbol|No such module|CompileSwift|CompileC|Error \(Xcode\)|Failed to build' "$LOG_FILE" | tail -80 || true)"
-    detail="${tail_lines}"
-    if [ -n "$err_lines" ]; then
-      detail="${detail}
-=== ERROR LINES ===
-${err_lines}"
-    fi
-    detail="$(printf '%s' "$detail" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-    msg="${msg}%0A%0A--- LOG (tail 200 + error lines) ---%0A${detail}"
+    local err_lines tail_lines
+    err_lines="$(grep -nE -A 6 -B 2 \
+      'error:|fatal error:|BUILD FAILED|Undefined symbols?|ld: |No such module|clang: error|Error \(Xcode\)|Failed to build|build hook|native asset|IPHONEOS_DEPLOYMENT_TARGET' \
+      "$LOG_FILE" | tail -400 || true)"
+    tail_lines="$(tail -120 "$LOG_FILE")"
+    body="=== ERROR LINES ===
+${err_lines:-none matched}
+=== LOG TAIL (120 lines) ===
+${tail_lines}"
   fi
-  echo "::error::${msg}" >&2
+  body="$(printf '%s' "$body" | cut -c1-40000 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+  echo "::error::iOS build failed at: ${label}%0A%0A${body}" >&2
   exit 1
 }
 
