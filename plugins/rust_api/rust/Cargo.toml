@@ -28,6 +28,13 @@ global-hotkey = "0.8"
 [target.'cfg(all(unix, not(any(target_os = "android", target_os = "ios"))))'.dependencies]
 libc = "0.2"
 
+# libc 0.2.190 declares `_dyld_*` for macOS alone, while backtrace builds its
+# macOS library lookup for every Apple target and calls them there, so iOS stops
+# compiling. Hold libc at the last release that still declares them for iOS
+# until backtrace narrows that module to macOS.
+[target.'cfg(target_os = "ios")'.dependencies]
+libc = "=0.2.189"
+
 # rquickjs ships pre-generated bindings for every target this project builds
 # except the Android ones, which have to be generated during the build.
 [target.'cfg(target_os = "android")'.dependencies]
