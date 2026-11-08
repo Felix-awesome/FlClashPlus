@@ -40,13 +40,20 @@ class Request {
     );
   }
 
-  Future<Response<T>> _download<T>(String url, ResponseType responseType) {
+  Future<Response<T>> _download<T>(
+    String url,
+    ResponseType responseType, {
+    Map<String, String>? headers,
+  }) {
     final target = downloadTarget(url);
     final cancelToken = CancelToken();
     return _clashDio
         .getUri<T>(
           target.uri,
-          options: Options(responseType: responseType, headers: target.headers),
+          options: Options(
+            responseType: responseType,
+            headers: {...target.headers, ...?headers},
+          ),
           cancelToken: cancelToken,
         )
         .timeout(
@@ -73,9 +80,15 @@ class Request {
     }
   }
 
-  Future<Response<String>> getTextResponseForUrl(String url) async {
+  /// Fetches [url] as text, with [headers] overriding the ones the download
+  /// would otherwise send — the user agent, for a host that serves different
+  /// content to different clients.
+  Future<Response<String>> getTextResponseForUrl(
+    String url, {
+    Map<String, String>? headers,
+  }) async {
     try {
-      return await _download<String>(url, ResponseType.plain);
+      return await _download<String>(url, ResponseType.plain, headers: headers);
     } catch (e) {
       commonPrint.log(
         'getTextResponseForUrl error ${compactError(e)}',

@@ -49,6 +49,10 @@ Future<Map<String, String>> fetchMitmScripts(
     var source = '';
     try {
       source = await fetch(ref);
+      if (source.isNotEmpty && _looksLikeMarkup(source)) {
+        commonPrint.log('fetch MITM script $ref answered with a web page');
+        source = '';
+      }
       if (source.isNotEmpty) {
         await _storeCachedFile(_scriptFolder, ref, _scriptExtension, source);
       }
@@ -468,8 +472,50 @@ String _unquote(String text) {
 /// Going through the proxy is what makes this work: a rule set or script is
 /// routinely hosted on a service that is only reachable through a node.
 Future<String> downloadRemoteFile(String url) async {
-  final response = await request.getTextResponseForUrl(url);
-  return _trimBom(response.data ?? '');
+  String? served;
+  try {
+    served = await _fetchRemoteText(url, _ruleSetUserAgent);
+    if (!_looksLikeMarkup(served)) return _trimBom(served);
+  } catch (error) {
+    commonPrint.log('fetch $url as a Quantumult X client failed: $error');
+  }
+  // Some hosts serve the file only to a client they recognise and answer
+  // everyone else with their landing page or a refusal. A proxy client agent is
+  // the one these rule sets are written for, and the browser agent is the other
+  // half of the same gate, so it is worth one retry before calling the address
+  // broken.
+  final fallback = await _fetchRemoteText(url, null);
+  return _trimBom(fallback.isEmpty ? served ?? '' : fallback);
+}
+
+/// The user agent a rewrite rule set is fetched with.
+///
+/// Addressing a rule set with the app's own agent is what makes a host answer
+/// with its web page instead: the body is a 200 and looks downloaded, but it
+/// carries no rules at all, which reads to the user as "this address cannot be
+/// recognised". A rule set is written for Quantumult X, so the download says
+/// so, and the hosts that gate on the client serve the file.
+const _ruleSetUserAgent = 'Quantumult X/1.4.1 (iPhone; iOS 17.5; Scale/3.00)';
+
+Future<String> _fetchRemoteText(String url, String? userAgent) async {
+  final response = await request.getTextResponseForUrl(
+    url,
+    headers: userAgent == null
+        ? null
+        : {HttpHeaders.userAgentHeader: userAgent},
+  );
+  return response.data ?? '';
+}
+
+/// Whether [text] is a web page rather than a rule set or a script.
+///
+/// A host that answers with its landing page still answers 200, so the only
+/// way to tell a download that failed from one that worked is that a rule set
+/// never starts with markup. Keeping such a body out of the cache is what stops
+/// a landing page from replacing rules that do work.
+bool _looksLikeMarkup(String text) {
+  final head = text.trimLeft().toLowerCase();
+  return head.startsWith('<!doctype') || head.startsWith('<html');
 }
 
 const _ruleSetFolder = 'rules';
@@ -540,6 +586,12 @@ Future<MitmRuleSetFetch> fetchRuleSet(
   var ok = false;
   try {
     content = await fetch(url);
+    if (_looksLikeMarkup(content)) {
+      // The address answered, but with its own web page: it carries no rules,
+      // so it counts as a failed download and the stored copy stays in place.
+      commonPrint.log('fetch MITM rule set $url answered with a web page');
+      content = '';
+    }
     if (content.isNotEmpty) {
       await _storeCachedFile(_ruleSetFolder, url, _ruleSetExtension, content);
       ok = true;

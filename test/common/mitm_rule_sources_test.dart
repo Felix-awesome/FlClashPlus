@@ -6,6 +6,16 @@ import 'package:path/path.dart' show join;
 
 import '../helpers/app_paths.dart';
 
+/// What a rule set host answers with when it does not recognise the client:
+/// its landing page, served as 200.
+const _landingPage = '''
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>首页</title></head>
+<body><a href="/rewrite/StartUpAds.conf">下载</a></body>
+</html>
+''';
+
 const _weiboRuleSet = '''
 hostname = api.weibo.cn, mapi.weibo.com,
 
@@ -259,6 +269,31 @@ host, ads.example, reject
 
       expect(result.ok, isFalse);
       expect(result.content, _weiboRuleSet);
+    });
+
+    test('a web page never replaces the stored copy', () async {
+      const url = 'https://ddgksf2013.top/rewrite/StartUpAds.conf';
+      await refreshRuleSets([url], fetch: (url) async => _weiboRuleSet);
+
+      // A host that serves its landing page to a client it does not recognise
+      // answers 200 with markup, which parses to no rules at all.
+      final result = await fetchRuleSet(
+        url,
+        fetch: (url) async => _landingPage,
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.content, _weiboRuleSet);
+      expect(await loadCachedRuleSet(url), _weiboRuleSet);
+    });
+
+    test('a script that is a web page is not used', () async {
+      final scripts = await fetchMitmScripts(
+        r'^https?://a\.example/1 url script-response-body https://cdn.example/a.js',
+        fetch: (url) async => _landingPage,
+      );
+
+      expect(scripts, isEmpty);
     });
 
     test('the cached copies load without touching the network', () async {
