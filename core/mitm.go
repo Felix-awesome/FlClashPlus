@@ -135,6 +135,23 @@ func handleUpdateMitmRules(params *UpdateMitmRulesParams) error {
 	// in a "[mitm]" section; honouring it keeps such a file working unchanged.
 	set.SetHostnames(parsed.Hostnames)
 
+	// A script rule whose source was never downloaded cannot run. Saying so at
+	// install time is the only way a user finds out, because the request itself
+	// just passes through untouched.
+	missing := 0
+	for _, r := range parsed.Rules {
+		if r.Script != "" ||
+			(r.Action != mitm.ActionScriptRequest && r.Action != mitm.ActionScriptResponse) {
+			continue
+		}
+		if _, ok := params.Scripts[r.Arg]; !ok {
+			missing++
+		}
+	}
+	if missing > 0 {
+		log.Warnln("[MITM] %d script rule(s) reference a script that was not downloaded", missing)
+	}
+
 	// Wire the Quantumult X script engine, resolving script references (URL or
 	// local name) against the scripts bundled with this update. Without any
 	// scripts the engine is left unset and only fixed rewrite actions run.
