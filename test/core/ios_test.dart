@@ -270,9 +270,9 @@ void main() {
 
     test('returns null when the extension never answers', () async {
       when(() => service.getStatus()).thenAnswer((_) async => true);
-      when(() => service.invokeMethod(any())).thenAnswer(
-        (_) => Completer<CoreMethodResponse?>().future,
-      );
+      when(
+        () => service.invokeMethod(any()),
+      ).thenAnswer((_) => Completer<CoreMethodResponse?>().future);
 
       final result = await core.invokeMethod<bool>(
         method: CoreMethod.getIsInit,
