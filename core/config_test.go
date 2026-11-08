@@ -561,7 +561,9 @@ func withGeoResourceUpdaters(t *testing.T, updaters map[string]func() error) {
 	previous := geoResources
 	geoResources = make(map[string]geoResource, len(updaters))
 	for name, update := range updaters {
-		geoResources[name] = geoResource{update: update}
+		geoResources[name] = geoResource{
+			update: func() (bool, error) { return false, update() },
+		}
 	}
 	t.Cleanup(func() {
 		geoResources = previous

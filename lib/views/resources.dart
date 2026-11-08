@@ -421,14 +421,8 @@ class _FileInfoBuilderState extends ConsumerState<_FileInfoBuilder> {
 }
 
 Future<FileInfo?> _geoFileInfo(GeoResource type) async {
-  final fileName = switch (type) {
-    GeoResource.MMDB => MMDB,
-    GeoResource.ASN => ASN,
-    GeoResource.GEOIP => GEOIP,
-    GeoResource.GEOSITE => GEOSITE,
-  };
   final homePath = await appPath.homeDirPath;
-  return File(join(homePath, fileName)).getFileInfo();
+  return File(join(homePath, geoFileName(type))).getFileInfo();
 }
 
 class _GeoResourceItem extends ConsumerWidget {
