@@ -77,6 +77,18 @@ class Preferences {
     }
   }
 
+  /// The remote rule sets the MITM rewrite pulls its rules from. One URL per
+  /// entry, in the order the core should match them.
+  Future<List<String>> getMitmRuleSources() async {
+    final preferences = await _store.value;
+    return preferences?.getStringList(mitmRuleSourcesKey) ?? const [];
+  }
+
+  Future<void> saveMitmRuleSources(List<String> sources) async {
+    final preferences = await _store.value;
+    await preferences?.setStringList(mitmRuleSourcesKey, sources);
+  }
+
   Future<Map<String, Object?>?> getConfigMap() async {
     try {
       final preferences = await _store.value;

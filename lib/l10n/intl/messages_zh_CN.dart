@@ -206,6 +206,10 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m86(count) => "${count} 年前";
 
+  static String m87(count) => "${count} 个地址";
+
+  static String m88(count) => "已安装 ${count} 个规则集";
+
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
     "about": MessageLookupByLibrary.simpleMessage("关于"),
@@ -932,6 +936,10 @@ class MessageLookup extends MessageLookupByLibrary {
       "拦截 HTTPS 流量，并按下方规则重写匹配请求，用于屏蔽广告与追踪。",
     ),
     "mitmRewrite": MessageLookupByLibrary.simpleMessage("MITM 重写"),
+    "mitmRuleSources": MessageLookupByLibrary.simpleMessage("远端规则集"),
+    "mitmRuleSourcesCount": m87,
+    "mitmRuleSourcesEmpty": MessageLookupByLibrary.simpleMessage("未添加远端规则集"),
+    "mitmRuleSourcesSaved": m88,
     "mitmRules": MessageLookupByLibrary.simpleMessage("重写规则"),
     "mitmRulesCount": m50,
     "mitmRulesEmpty": MessageLookupByLibrary.simpleMessage("暂无规则"),

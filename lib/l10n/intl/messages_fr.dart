@@ -246,6 +246,10 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m86(count) =>
       "${Intl.plural(count, other: 'il y a ${count} a')}";
 
+  static String m87(count) => "$count adresses";
+
+  static String m88(count) => "$count jeux de règles installés";
+
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
     "about": MessageLookupByLibrary.simpleMessage("À propos"),
@@ -1283,6 +1287,14 @@ class MessageLookup extends MessageLookupByLibrary {
       "Intercept HTTPS traffic and rewrite matching requests to block ads and trackers.",
     ),
     "mitmRewrite": MessageLookupByLibrary.simpleMessage("MITM Rewrite"),
+    "mitmRuleSources": MessageLookupByLibrary.simpleMessage(
+      "Jeux de règles distants",
+    ),
+    "mitmRuleSourcesCount": m87,
+    "mitmRuleSourcesEmpty": MessageLookupByLibrary.simpleMessage(
+      "Aucun jeu de règles distant",
+    ),
+    "mitmRuleSourcesSaved": m88,
     "mitmRules": MessageLookupByLibrary.simpleMessage("Rewrite rules"),
     "mitmRulesCount": m50,
     "mitmRulesEmpty": MessageLookupByLibrary.simpleMessage("No rules yet"),

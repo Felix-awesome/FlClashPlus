@@ -211,6 +211,10 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m86(count) => "${Intl.plural(count, other: '${count}년 전')}";
 
+  static String m87(count) => "주소 $count개";
+
+  static String m88(count) => "규칙 집합 $count개 설치됨";
+
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
     "about": MessageLookupByLibrary.simpleMessage("정보"),
@@ -1011,6 +1015,10 @@ class MessageLookup extends MessageLookupByLibrary {
       "Intercept HTTPS traffic and rewrite matching requests to block ads and trackers.",
     ),
     "mitmRewrite": MessageLookupByLibrary.simpleMessage("MITM Rewrite"),
+    "mitmRuleSources": MessageLookupByLibrary.simpleMessage("원격 규칙 집합"),
+    "mitmRuleSourcesCount": m87,
+    "mitmRuleSourcesEmpty": MessageLookupByLibrary.simpleMessage("원격 규칙 집합 없음"),
+    "mitmRuleSourcesSaved": m88,
     "mitmRules": MessageLookupByLibrary.simpleMessage("Rewrite rules"),
     "mitmRulesCount": m50,
     "mitmRulesEmpty": MessageLookupByLibrary.simpleMessage("No rules yet"),

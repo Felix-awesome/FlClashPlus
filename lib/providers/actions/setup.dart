@@ -811,13 +811,38 @@ class SetupAction extends _$SetupAction {
       return;
     }
     try {
+      // The cached copy of every remote rule set is installed first: a start
+      // never waits on a subscription host, and a rule set that is slow or
+      // unreachable right now still keeps the rules it had.
+      final sources = await preferences.getMitmRuleSources();
+      final ruleSets = await loadCachedRuleSets(sources);
       // Re-pull remote scripts referenced by script-* rules so the core can
       // run them after every (re)start of the core process.
-      final scripts = await fetchMitmScripts(appSetting.mitmRules);
-      await _core.updateMitmRules(appSetting.mitmRules, scripts: scripts);
+      final ruleSet = await buildMitmRuleSet(appSetting.mitmRules, ruleSets);
+      await _core.updateMitmRules(ruleSet.rules, scripts: ruleSet.scripts);
       await _core.setMitm(const SetMitmParams(enable: true));
+      if (sources.isNotEmpty) {
+        // Newer copies of those rule sets follow in the background and replace
+        // the ones just installed when they differ.
+        unawaited(_refreshMitmRuleSets(sources));
+      }
     } catch (error) {
       commonPrint.log('sync mitm failed: $error');
+    }
+  }
+
+  /// Downloads the remote rule sets again and installs the result, so a
+  /// subscription stays current without a manual refresh.
+  Future<void> _refreshMitmRuleSets(List<String> sources) async {
+    try {
+      final ruleSets = await refreshRuleSets(sources);
+      final ruleSet = await buildMitmRuleSet(
+        ref.read(appSettingProvider).mitmRules,
+        ruleSets,
+      );
+      await _core.updateMitmRules(ruleSet.rules, scripts: ruleSet.scripts);
+    } catch (error) {
+      commonPrint.log('refresh mitm rule sets failed: $error');
     }
   }
 

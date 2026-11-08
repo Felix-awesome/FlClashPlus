@@ -8105,6 +8105,50 @@ class AppLocalizations {
     );
   }
 
+  /// `Remote rule sets`
+  String get mitmRuleSources {
+    return Intl.message(
+      'Remote rule sets',
+      name: 'mitmRuleSources',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No remote rule sets`
+  String get mitmRuleSourcesEmpty {
+    return Intl.message(
+      'No remote rule sets',
+      name: 'mitmRuleSourcesEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `{count, plural, =1{1 address} other{{count} addresses}}`
+  String mitmRuleSourcesCount(num count) {
+    return Intl.plural(
+      count,
+      one: '1 address',
+      other: '$count addresses',
+      name: 'mitmRuleSourcesCount',
+      desc: '',
+      args: [count],
+    );
+  }
+
+  /// `{count, plural, =1{1 rule set installed} other{{count} rule sets installed}}`
+  String mitmRuleSourcesSaved(num count) {
+    return Intl.plural(
+      count,
+      one: '1 rule set installed',
+      other: '$count rule sets installed',
+      name: 'mitmRuleSourcesSaved',
+      desc: '',
+      args: [count],
+    );
+  }
+
   /// `CA certificate`
   String get mitmCertificate {
     return Intl.message(
