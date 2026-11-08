@@ -6,6 +6,7 @@ import (
 
 	"github.com/metacubex/mihomo/adapter"
 	mihomoHttp "github.com/metacubex/mihomo/component/http"
+	"github.com/metacubex/mihomo/component/mitm"
 	"github.com/metacubex/mihomo/component/proxydialer"
 	"github.com/metacubex/mihomo/component/updater"
 	"github.com/metacubex/mihomo/dns"
@@ -25,6 +26,9 @@ func init() {
 			watchRequestTraffic(c)
 		}
 	}
+	// An intercepted request is answered outside the tunnel, so the request log
+	// only learns about it from the interceptor itself.
+	mitm.SetHitObserver(recordMitmHit)
 	dns.DefaultQueryNotify = func(record dns.QueryRecord) {
 		if hasEventListener() {
 			sendMessage(DnsMessage, newDnsQuery(record))
