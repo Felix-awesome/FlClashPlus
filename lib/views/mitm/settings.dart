@@ -81,6 +81,10 @@ class _MitmViewState extends ConsumerState<MitmView> {
                   (state) => state.enableMitm,
                 ),
                 onChanged: (ref, value) async {
+                  // Taken now: the switch rebuilds as soon as the setting
+                  // changes, and a ref read after that await belongs to a
+                  // widget that is already gone.
+                  final core = ref.read(coreHandlerProvider);
                   ref
                       .read(appSettingProvider.notifier)
                       .update((state) => state.copyWith(enableMitm: value));
@@ -90,9 +94,11 @@ class _MitmViewState extends ConsumerState<MitmView> {
                   if (value) {
                     await installMitmRules(ref);
                   }
-                  await ref
-                      .read(coreHandlerProvider)
-                      .setMitm(SetMitmParams(enable: value));
+                  try {
+                    await core.setMitm(SetMitmParams(enable: value));
+                  } catch (error) {
+                    commonPrint.log('set MITM failed: $error');
+                  }
                 },
               ),
               ListItem.open(

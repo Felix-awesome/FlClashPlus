@@ -16,6 +16,10 @@ class _StalledHttpClient extends Fake implements HttpClient {
   String Function(Uri url)? findProxy;
 
   @override
+  bool Function(X509Certificate certificate, String host, int port)?
+  badCertificateCallback;
+
+  @override
   Future<HttpClientRequest> openUrl(String method, Uri url) =>
       Completer<HttpClientRequest>().future;
 }
@@ -142,6 +146,20 @@ void main() {
           'Basic ${base64.encode(utf8.encode('me@mail.com:p:w'))}',
         );
       }
+    });
+  });
+
+  group('isOwnMitmIssuer', () {
+    test('accepts only the certificate this build forges', () {
+      expect(isOwnMitmIssuer('/O=FlClashPlus/CN=FlClashPlus MITM CA'), isTrue);
+      expect(
+        isOwnMitmIssuer('CN=FlClashPlus MITM CA, O=FlClashPlus, C=CN'),
+        isTrue,
+      );
+      expect(isOwnMitmIssuer('CN=R3,O=Let\'s Encrypt,C=US'), isFalse);
+      expect(isOwnMitmIssuer('CN=FlClashPlus MITM CA Extra'), isFalse);
+      expect(isOwnMitmIssuer('CN=FakeFlClashPlus MITM CA'), isFalse);
+      expect(isOwnMitmIssuer(''), isFalse);
     });
   });
 

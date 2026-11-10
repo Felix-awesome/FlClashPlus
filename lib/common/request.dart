@@ -35,6 +35,12 @@ class Request {
           }
           return FlClashHttpOverrides.findProxyForReader(read, uri);
         };
+        // With rewriting on, the core terminates TLS for the hosts its rules
+        // mention, so a rule set or a script hosted on one of them comes back
+        // signed by this device's own interception CA. Nothing else may be
+        // accepted here: a certificate from any other issuer still fails.
+        client.badCertificateCallback = (certificate, host, port) =>
+            isOwnMitmIssuer(certificate.issuer);
         return client;
       },
     );
@@ -141,6 +147,21 @@ class Request {
 }
 
 final request = Request();
+
+/// The common name of the interception CA this build generates. It appears in
+/// the issuer of every certificate the rewrite interceptor forges.
+const mitmCertificateIssuerName = 'FlClashPlus MITM CA';
+
+final _mitmIssuerPattern = RegExp(
+  r'(^|[/,])CN=' + RegExp.escape(mitmCertificateIssuerName) + r'([/,]|$)',
+);
+
+/// Whether a certificate was issued by this device's own interception CA, which
+/// is the only extra signer the download client accepts. Trusting exactly this
+/// one keeps a rule set reachable while rewriting is on without weakening
+/// verification for any other host.
+@visibleForTesting
+bool isOwnMitmIssuer(String issuer) => _mitmIssuerPattern.hasMatch(issuer);
 
 /// Some subscription servers send a gzip or zlib body without saying so in
 /// Content-Encoding, which is the only signal dart:io decompresses on.

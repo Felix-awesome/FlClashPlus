@@ -158,6 +158,7 @@ class _MitmRulesViewState extends ConsumerState<MitmRulesView> {
     final total = _groups.where((group) => group.source != null).length;
     setState(() => _busy = true);
     final updated = await preferences.refreshMitmRuleSources();
+    if (!mounted) return;
     await installMitmRules(ref);
     await _load();
     if (!mounted) return;

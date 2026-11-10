@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/features/form/form.dart';
+import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -53,11 +54,15 @@ class _MitmRuleSourcesViewState extends ConsumerState<MitmRuleSourcesView> {
 
   /// Stores [next] and pushes the resulting rules into the core.
   Future<void> _save(List<MitmRuleSource> next) async {
+    // Resolved before the write: a download that finished after this page was
+    // closed must still reach the core, so the ref is not used past the await.
+    final core = ref.read(coreHandlerProvider);
+    final localRules = ref.read(appSettingProvider).mitmRules;
     await preferences.saveMitmRuleSources(next);
     if (mounted) {
       setState(() => _sources = next);
     }
-    await installMitmRules(ref);
+    await installMitmRulesFor(core, localRules);
     await _load();
   }
 
@@ -202,6 +207,7 @@ class _MitmRuleSourcesViewState extends ConsumerState<MitmRuleSourcesView> {
     final total = _sources.length;
     setState(() => _busy = true);
     final updated = await preferences.refreshMitmRuleSources();
+    if (!mounted) return;
     await installMitmRules(ref);
     await _load();
     if (!mounted) return;
