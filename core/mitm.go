@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/metacubex/mihomo/component/mitm"
 	"github.com/metacubex/mihomo/constant"
@@ -19,7 +21,45 @@ var (
 	mitmRuleSet *mitm.Set
 	mitmEnabled bool
 	mitmInited  bool
+
+	mitmWatchdogOnce sync.Once
 )
+
+// mitmWatchdogInterval is how often the footprint is reported while rewriting
+// is on. Two minutes keeps the app log readable while still showing a trend.
+const mitmWatchdogInterval = 2 * time.Minute
+
+// startMitmWatchdog reports the core's footprint while interception is on.
+//
+// A tunnel extension that outgrows the memory budget iOS allows it is killed by
+// the system, and such a kill leaves nothing in the app's log -- the tunnel
+// simply stops and the VPN badge disappears. These numbers are what tells that
+// apart from a crash: a heap that climbs towards the budget is a leak, a heap
+// that stays flat and a tunnel that still stops is a fault.
+func startMitmWatchdog() {
+	mitmWatchdogOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(mitmWatchdogInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				mitmMu.Lock()
+				enabled := mitmEnabled
+				mitmMu.Unlock()
+				if !enabled {
+					continue
+				}
+				var stats runtime.MemStats
+				runtime.ReadMemStats(&stats)
+				log.Infoln(
+					"[MITM] heap %d MB, resident %d MB, goroutines %d",
+					stats.HeapAlloc>>20,
+					stats.Sys>>20,
+					runtime.NumGoroutine(),
+				)
+			}
+		}()
+	})
+}
 
 // mitmHome returns the directory under mihomo's home dir where the MITM CA is
 // persisted, so a device only has to trust one root across app restarts.
@@ -96,6 +136,9 @@ func handleSetMitm(params *SetMitmParams) error {
 	}
 	mitm.Enable(params.Enable, ca, mitmRuleSet)
 	log.Infoln("[MITM] interception %s", map[bool]string{true: "enabled", false: "disabled"}[params.Enable])
+	if params.Enable {
+		startMitmWatchdog()
+	}
 	return nil
 }
 
