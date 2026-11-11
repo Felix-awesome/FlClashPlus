@@ -7,6 +7,15 @@ class CoreAction extends _$CoreAction {
   int _requestedRestartRevision = 0;
   Future<bool>? _restartOperation;
 
+  /// How long a start or a restart may take before the app stops waiting.
+  ///
+  /// The extension waits 45s for its core to come up and gives an acknowledged
+  /// call another 150s, so a transition that outlives this is not going to
+  /// finish. Without a bound, one that never completes leaves the badge
+  /// spinning for the rest of the session with nothing said about what it is
+  /// waiting for -- which reads exactly like a core that is still starting.
+  static const _lifecycleTimeout = Duration(minutes: 4);
+
   @override
   void build() {}
 
@@ -26,12 +35,48 @@ class CoreAction extends _$CoreAction {
   Future<void> startCore() async {
     ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
     try {
-      final result = await startLifecycle();
-      await _applyLifecycleResult(result);
+      await _runLifecycle(startLifecycle);
+    } on TimeoutException {
+      await _reportStuckLifecycle('start');
     } catch (error) {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
       dialogs.showNotifier(error.toString(), level: MessageLevel.error);
     }
+  }
+
+  /// Runs one transition and the init that follows it, bounded by
+  /// [_lifecycleTimeout].
+  Future<bool> _runLifecycle(
+    Future<CoreLifecycleResult> Function() lifecycle, {
+    bool statusFirst = false,
+  }) {
+    return (() async {
+      final result = await lifecycle();
+      return _applyLifecycleResult(result, statusFirst: statusFirst);
+    })().timeout(_lifecycleTimeout);
+  }
+
+  /// Reports a transition that did not finish, naming the step the extension
+  /// stopped at when it can say.
+  Future<void> _reportStuckLifecycle(String action) async {
+    ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
+    var detail = 'Core did not finish starting';
+    try {
+      final described = await _core.coreDiagnostics();
+      if (described.isNotEmpty) {
+        detail = described;
+      }
+    } catch (error) {
+      commonPrint.log(
+        'core diagnostics failed: $error',
+        logLevel: LogLevel.warning,
+      );
+    }
+    commonPrint.log(
+      'core $action timed out: $detail',
+      logLevel: LogLevel.error,
+    );
+    dialogs.showNotifier(detail, level: MessageLevel.error);
   }
 
   @protected
@@ -109,8 +154,7 @@ class CoreAction extends _$CoreAction {
   Future<bool> _runRestartWorker() async {
     try {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
-      final result = await restartLifecycle();
-      if (!await _applyLifecycleResult(result, statusFirst: true)) {
+      if (!await _runLifecycle(restartLifecycle, statusFirst: true)) {
         return false;
       }
 
@@ -130,6 +174,9 @@ class CoreAction extends _$CoreAction {
         appliedRevision = revision;
       }
       return applied;
+    } on TimeoutException {
+      await _reportStuckLifecycle('restart');
+      return false;
     } catch (_) {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
       rethrow;

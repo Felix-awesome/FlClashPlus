@@ -93,6 +93,10 @@ class CoreController {
 
   FutureOr<bool> get isInit => _interface.isInit;
 
+  /// Extra context a transport can give for a silent core: which startup step
+  /// the extension stopped at, for a start that never finished.
+  Future<String> coreDiagnostics() => _interface.coreDiagnostics();
+
   Future<String> validateConfig(String path) async {
     final res = await _interface.validateConfig(path);
     return res;
