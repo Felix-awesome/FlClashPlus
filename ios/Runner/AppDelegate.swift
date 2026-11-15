@@ -37,6 +37,135 @@ import NetworkExtension
     /// so a stale object can never drive a stale tunnel.
     private var cachedManager: NETunnelProviderManager?
 
+    // MARK: - Reaped-provider watchdog
+
+    /// How often a live tunnel is checked for a provider that is no longer
+    /// there. Cheap by design: one file-stat per tick, on the main run loop, and
+    /// only while a tunnel is up.
+    private static let providerWatchdogInterval: TimeInterval = 3
+
+    /// Watches a connected tunnel for a provider process that the system has
+    /// reaped, and restarts it.
+    ///
+    /// Until now this only happened inside `start()`: a launch could see the
+    /// stale heartbeat and start fresh, but a tunnel that lost its provider
+    /// *during* a session stayed "connected" for as long as the user left it
+    /// alone. Everything downstream then failed in the app -- traffic stopped,
+    /// every core call waited out its timeout and reported "no answer", and the
+    /// status panel kept showing a connected tunnel with a core that was not
+    /// running. The mtime of the heartbeat is the only evidence the app has, so
+    /// it polls that.
+    private var providerWatchdog: Timer?
+
+    /// Set while a restart is in flight, so overlapping ticks cannot issue a
+    /// second stop/start against a connection that is already moving.
+    private var restartInFlight = false
+
+    private func startProviderWatchdog() {
+        guard providerWatchdog == nil else { return }
+        let timer = Timer(
+            timeInterval: Self.providerWatchdogInterval,
+            repeats: true
+        ) { [weak self] _ in
+            self?.providerWatchdogTick()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        providerWatchdog = timer
+    }
+
+    private func stopProviderWatchdog() {
+        providerWatchdog?.invalidate()
+        providerWatchdog = nil
+    }
+
+    private func providerWatchdogTick() {
+        guard !restartInFlight else { return }
+        // The cached manager is the one a start or a status read just used, and
+        // every tick reloading all configurations from preferences would put an
+        // XPC round trip on a three-second loop for the whole session.
+        if let manager = cachedManager {
+            checkProvider(of: manager)
+            return
+        }
+        loadTunnelManager(createIfMissing: false) { manager, _ in
+            guard let manager = manager else {
+                self.stopProviderWatchdog()
+                return
+            }
+            self.checkProvider(of: manager)
+        }
+    }
+
+    private func checkProvider(of manager: NETunnelProviderManager) {
+        let status = manager.connection.status
+        guard status == .connected else {
+            // Connecting is not a failure yet, and a tunnel being torn down by
+            // the user must not be resurrected here.
+            if status != .connecting && status != .reasserting
+                && status != .disconnecting {
+                stopProviderWatchdog()
+            }
+            return
+        }
+        guard Self.providerLiveness().isDead else { return }
+        Self.log("watchdog: the tunnel is connected but its provider is gone; restarting")
+        restartReapedTunnel(manager)
+    }
+
+    /// Tears the phantom tunnel down and starts a fresh one.
+    ///
+    /// The new provider boots from `config.yaml` in the shared container, which
+    /// is the profile the app applied last, so the tunnel comes back with its
+    /// real proxies instead of the empty default the core starts on.
+    ///
+    /// Both facts are re-checked against a freshly loaded manager first. A
+    /// restart interrupts whatever the tunnel was carrying, and the cached
+    /// object a tick happened to hold can describe an older session -- so the
+    /// one thing this must never do is tear down a working tunnel because a
+    /// stale snapshot said so.
+    private func restartReapedTunnel(_ manager: NETunnelProviderManager) {
+        guard !restartInFlight else { return }
+        restartInFlight = true
+        let started = Date()
+        manager.loadFromPreferences { error in
+            if let error = error {
+                Self.log("watchdog: reload failed, leaving the tunnel alone: "
+                    + error.localizedDescription)
+                self.restartInFlight = false
+                return
+            }
+            guard manager.connection.status == .connected,
+                  Self.providerLiveness().isDead else {
+                Self.log("watchdog: recheck says the tunnel is fine; not restarting")
+                self.restartInFlight = false
+                return
+            }
+            manager.connection.stopVPNTunnel()
+            // `stopVPNTunnel` is asynchronous: a start issued in the same turn
+            // is refused while the old connection is still tearing down, which
+            // is exactly what leaves a "connected" ghost behind.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                manager.loadFromPreferences { startError in
+                    defer { self.restartInFlight = false }
+                    if let startError = startError {
+                        Self.log("watchdog: reload before start failed: "
+                            + startError.localizedDescription)
+                        return
+                    }
+                    do {
+                        try manager.connection.startVPNTunnel()
+                        let elapsed = String(
+                            format: "%.1fs", Date().timeIntervalSince(started))
+                        Self.log("watchdog: tunnel restarted in " + elapsed)
+                    } catch {
+                        Self.log("watchdog: restart threw: "
+                            + error.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Failure classification
 
     /// Turns a NetworkExtension failure into something the user can act on.
@@ -521,6 +650,15 @@ import NetworkExtension
             // so the status the system reports is the better answer there.
             let liveness = Self.providerLiveness()
             let alive = connected && !liveness.isDead
+            // A connected tunnel is the only state worth watching, and asking
+            // for the status is the moment the app is looking anyway: this is
+            // where the watchdog gets armed on a launch that finds a tunnel
+            // already up.
+            if connected {
+                self.startProviderWatchdog()
+            } else if !connecting {
+                self.stopProviderWatchdog()
+            }
             result([
                 "connected": connected,
                 "connecting": connecting,
@@ -568,7 +706,11 @@ import NetworkExtension
     /// though `connection.status` still reads "connected". The threshold is
     /// generous on purpose: a device under load can miss a heartbeat, but a
     /// live provider never goes silent for this long.
-    private static let aliveGrace: TimeInterval = 15
+    ///
+    /// Twelve seconds against a four-second beat: three missed beats, which is
+    /// the shortest window a busy device cannot fake, and six seconds less of
+    /// a dead tunnel than the previous 15.
+    private static let aliveGrace: TimeInterval = 12
 
     private static func providerLiveness() -> ProviderLiveness {
         // No container means the heartbeat cannot be read *or* written. The
@@ -631,6 +773,10 @@ import NetworkExtension
                     // tear the phantom down and start fresh.
                     if Self.providerIsAlive() {
                         self.remember(manager)
+                        // Already up and demonstrably alive: this is the other
+                        // place the watchdog has to be armed, because a launch
+                        // that finds a live tunnel never calls startVPNTunnel.
+                        self.startProviderWatchdog()
                         result(true)
                         return
                     }
@@ -665,6 +811,11 @@ import NetworkExtension
                     Self.log("startVPNTunnel issued")
                     self.remember(manager)
                     self.runTime = Date()
+                    // Arm it now rather than once the status says "connected":
+                    // the watchdog ignores everything that is not a connected
+                    // tunnel, and a start whose provider dies before the status
+                    // settles would otherwise go unwatched.
+                    self.startProviderWatchdog()
                     self.waitForConnection(
                         manager.connection,
                         watch: ConnectionWatch(startedAt: Date()),
@@ -838,6 +989,10 @@ import NetworkExtension
             Self.log("stop requested (tunnel "
                 + Self.statusName(manager?.connection.status ?? .invalid) + ")")
             let connection = manager?.connection
+            // A stop the user asked for must not be undone by the watchdog a
+            // few seconds later, and its tick would otherwise see the tunnel go
+            // "connected" once more if the start path has not settled yet.
+            self?.stopProviderWatchdog()
             connection?.stopVPNTunnel()
             // stopVPNTunnel only queues the teardown. Answering at once lets
             // the Dart side call start() while the status is still

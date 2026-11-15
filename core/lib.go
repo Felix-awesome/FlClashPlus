@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/netip"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -447,7 +448,13 @@ func QuickSetup(initParamsString, setupParamsString string, answer func(string))
 			answer("init failed")
 			return
 		}
+		// The extension has disappeared twice right after this call, with the
+		// "QuickSetup begin" line as the last thing in the log and no answer
+		// ever written. Bracket the whole boot so the next log either shows the
+		// steps that completed or stops at the one that did not.
+		bootLogMemory("quickSetup begin")
 		handleInitClash(&initParams)
+		bootLogMemory("quickSetup init done")
 		setupParams := &SetupParams{}
 		if err := json.Unmarshal([]byte(setupParamsString), setupParams); err != nil {
 			answer(err.Error())
@@ -458,6 +465,12 @@ func QuickSetup(initParamsString, setupParamsString string, answer func(string))
 			answer(err.Error())
 			return
 		}
+		// The first config load is the largest allocation this process makes:
+		// it parses the profile, compiles every rule and pulls in whichever geo
+		// databases the rules name. Hand those pages back now, while the tunnel
+		// is idle, instead of waiting for a GC that the next spike may outrun.
+		debug.FreeOSMemory()
+		bootLogMemory("quickSetup done")
 		answer("")
 	}()
 }

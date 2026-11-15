@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -61,6 +62,15 @@ func handleSetupConfig(params *SetupParams) error {
 	if !isInit.Load() {
 		return errNotInitialized
 	}
+	bootLogMemory("setupConfig begin")
+	defer func() {
+		// A config load allocates the parsed profile, the compiled rule set and
+		// whatever geo databases its rules name. That transient is exactly what
+		// the extension dies on, so it is released here rather than left for
+		// the next collection to find.
+		debug.FreeOSMemory()
+		bootLogMemory("setupConfig done")
+	}()
 	return setupConfig(params)
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -45,3 +46,30 @@ func bootLog(format string, args ...any) {
 }
 
 var bootLogMu sync.Mutex
+
+// bootLogMemory records the Go side of the process footprint at one named step.
+//
+// It goes through bootLog rather than the log package on purpose. The mihomo
+// log is filtered down to warnings and above on the way into this file
+// (forwardCoreLogs), so the first version of this instrument -- a log.Infoln
+// from a watchdog -- never reached the log at all, and two rounds of
+// investigating "the tunnel just stops" were run with no memory numbers in
+// hand. bootLog writes the line itself, so nothing can filter it out.
+//
+// The numbers are the Go heap only. The kernel's limit counts the whole
+// process, which is why the provider logs its own phys_footprint beside these
+// lines: a heap that looks fine next to a footprint at the ceiling is a
+// non-Go allocation, and the two together say which one is growing.
+func bootLogMemory(step string) {
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	const mib = 1 << 20
+	bootLog(
+		"[mem] %s: heap %.1f MiB, idle %.1f MiB, sys %.1f MiB, goroutines %d",
+		step,
+		float64(stats.HeapAlloc)/mib,
+		float64(stats.HeapIdle-stats.HeapReleased)/mib,
+		float64(stats.Sys)/mib,
+		runtime.NumGoroutine(),
+	)
+}

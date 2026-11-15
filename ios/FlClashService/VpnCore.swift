@@ -135,6 +135,7 @@ final class VpnCore {
         let ready = DispatchSemaphore(value: 0)
         resultHandler.onAnswer = { _ in ready.signal() }
         BootLog.write("core: QuickSetup begin (homeDir=\(homeDir))")
+        BootLog.writeMemory("quickSetup begin")
         let setupStarted = Date()
         MobileQuickSetup(initParams, setupParams, resultHandler)
 
@@ -163,6 +164,9 @@ final class VpnCore {
         } else {
             BootLog.write("core: QuickSetup answered in \(elapsed)")
         }
+        // The first config load is the biggest this process ever does, and two
+        // of the kills landed right here with no line after the "begin" above.
+        BootLog.writeMemory("quickSetup end")
 
         // The tunnel's routes and DNS are already in place by the time this
         // runs: startTunnel submits the network settings before it answers the
@@ -208,6 +212,7 @@ final class VpnCore {
             "congestion-controller": "",
         ])
 
+        BootLog.writeMemory("startTun begin")
         let ok = MobileStartTun(fd, stack, address, dns, options)
         if !ok {
             lastError = lastError.isEmpty

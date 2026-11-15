@@ -30,6 +30,10 @@ func handleInitClash(params *InitParams) bool {
 	defer configMu.Unlock()
 	sdkVersion.Store(int32(params.Version))
 	constant.SetHomeDir(params.HomeDir)
+	if memGuardSummary != "" {
+		bootLog("[mem] guard: %s", memGuardSummary)
+	}
+	bootLogMemory("initClash")
 	initOwnership(params.HomeDir)
 	clearSpilledResponses()
 	isInit.Store(true)

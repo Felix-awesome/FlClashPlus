@@ -36,6 +36,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// packets never arrive (see TunnelTrafficMonitor).
     private var traffic: TunnelTrafficMonitor?
 
+    /// Reports this process's footprint while the tunnel is up. The three kills
+    /// this port has chased all happened inside a memory budget the kernel
+    /// enforces by killing silently, and the Go heap alone does not explain
+    /// them; this is the number that does (see BootLog.writeMemory).
+    private var memory: MemoryWatchdog?
+
     /// Fails startTunnel with a message that survives the failure.
     private func fail(
         _ code: Int,
@@ -109,6 +115,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // provider from a reaped one, and the window between "connected" and
         // "tun live" must still count as alive.
         startHeartbeat(homeDir: homeDir)
+
+        // From here on every few seconds costs one line, and the line before
+        // the log falls silent is the footprint this process died at.
+        let memory = MemoryWatchdog()
+        memory.start()
+        self.memory = memory
+        BootLog.writeMemory("startTunnel")
 
         let stack = providerConfig["stack"] as? String ?? "gvisor"
         let address = providerConfig["address"] as? String ?? "198.18.0.1/30"
@@ -315,7 +328,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         _ = FileManager.default.createFile(atPath: url.path, contents: Data())
         let timer = DispatchSource.makeTimerSource(
             queue: DispatchQueue.global(qos: .utility))
-        timer.schedule(deadline: .now() + 5, repeating: 5)
+        // Four seconds, not five: the app decides this provider is gone after
+        // 12 seconds without a beat (AppDelegate.aliveGrace), and three missed
+        // beats is the shortest window that cannot be a scheduling hiccup.
+        timer.schedule(deadline: .now() + 5, repeating: 4)
         timer.setEventHandler {
             // Touch the file; createFile updates mtime even when it exists.
             _ = FileManager.default.createFile(atPath: url.path, contents: Data())
@@ -330,6 +346,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         CoreBridge.shared.stop()
         heartbeat?.cancel()
         heartbeat = nil
+        memory?.stop()
+        memory = nil
         traffic?.stop()
         traffic = nil
         vpnCore?.stop()

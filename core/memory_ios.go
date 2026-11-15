@@ -3,8 +3,10 @@
 package core
 
 import (
+	"fmt"
 	"runtime/debug"
 
+	"github.com/metacubex/mihomo/component/geodata"
 	"github.com/metacubex/mihomo/log"
 )
 
@@ -37,19 +39,46 @@ func init() {
 		// How much of the ceiling the Go heap may occupy. The remainder is left
 		// to the runtime, the tun stack and the libraries, which the heap limit
 		// does not count against but the kernel's per-process limit does.
-		heapBudgetMiB = 32
+		//
+		// This was 32 and the extension still died at the ceiling: the measured
+		// kills all land within seconds of a large allocation, and the kernel
+		// counts more than the Go heap -- the tun stack's buffers, the TLS
+		// session caches and every linked library page are in the same budget.
+		//
+		// It is deliberately not lower. Below the live set the runtime does not
+		// fail, it collects continuously, which would turn "the tunnel dies" into
+		// "the tunnel is up and unusable". The geo verify this build turns off
+		// (below) removes the largest resident block, so the cut lands on the
+		// part that was transient anyway.
+		heapBudgetMiB = 24
 
 		// A tighter GC target: the heap may grow this much above its live set
 		// before a collection is forced. The default 100 lets a profile load
-		// spike far past 32 MiB before the runtime reacts.
-		gcPercent = 25
+		// spike far past the budget before the runtime reacts, and the soft
+		// limit alone only reacts once the heap is already at the line.
+		gcPercent = 20
 	)
 
 	limit := int64(heapBudgetMiB) << 20
 	debug.SetMemoryLimit(limit)
 	debug.SetGCPercent(gcPercent)
-	log.Infoln(
-		"[APP] iOS memory guard: GOMEMLIMIT=%d MiB (jetsam ceiling ~%d MiB), GOGC=%d",
+
+	// The geo databases are ours: every one of them is downloaded by
+	// installDatabase, verified there and only then renamed into place (see
+	// geo.go). The eager re-check geodata runs on first use buys nothing and
+	// costs the whole file parsed into memory plus a process-lifetime matcher
+	// -- for the "CN" list specifically, which most profiles never ask for.
+	geodata.SetVerifyOnInit(false)
+
+	memGuardSummary = fmt.Sprintf(
+		"GOMEMLIMIT=%d MiB (jetsam ceiling ~%d MiB), GOGC=%d, geo verify-on-init off",
 		heapBudgetMiB, hardLimitMiB, gcPercent,
 	)
+	log.Infoln("[APP] iOS memory guard: %s", memGuardSummary)
 }
+
+// memGuardSummary is written into the startup log once the home directory is
+// known: this init runs before the core has one, so the line cannot be written
+// here. A reader of the log needs the limit next to the footprint numbers to
+// tell "close to the budget" from "no budget at all".
+var memGuardSummary string

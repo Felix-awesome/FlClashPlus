@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -39,10 +40,16 @@ const (
 // the tunnel lives in the same process that replaces the file, which turns a
 // failed fetch into a dead tunnel.
 type geoDatabase struct {
-	url    func() string
-	path   func() string
+	url  func() string
+	path func() string
+	// verify checks the file on disk. Used where the check itself is cheap: the
+	// mmdb readers map the file instead of reading it.
 	verify func(path string) error
-	reload func()
+	// verifyBytes checks the bytes already in hand. Preferred where the check
+	// has to parse the whole file: re-reading the temp copy first would double
+	// the peak, and on iOS the peak is what gets the process killed.
+	verifyBytes func(data []byte) error
+	reload      func()
 }
 
 var (
@@ -71,11 +78,7 @@ var (
 	geoIPDatabase = geoDatabase{
 		url:  geodata.GeoIpUrl,
 		path: func() string { return C.Path.GeoIP() },
-		verify: func(path string) error {
-			buf, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
+		verifyBytes: func(buf []byte) error {
 			loader, err := geodata.GetGeoDataLoader("standard")
 			if err != nil {
 				return err
@@ -90,11 +93,7 @@ var (
 	geoSiteDatabase = geoDatabase{
 		url:  geodata.GeoSiteUrl,
 		path: func() string { return C.Path.GeoSite() },
-		verify: func(path string) error {
-			buf, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
+		verifyBytes: func(buf []byte) error {
 			loader, err := geodata.GetGeoDataLoader("standard")
 			if err != nil {
 				return err
@@ -210,7 +209,16 @@ func installDatabase(database geoDatabase) (skipped bool, err error) {
 	if err = os.WriteFile(temp, data, 0o644); err != nil {
 		return false, err
 	}
-	if err = database.verify(temp); err != nil {
+	if database.verifyBytes != nil {
+		// Verify what was downloaded, not a second copy of it: reading the temp
+		// file back would put the whole database in memory twice, and on iOS the
+		// extension is killed for crossing a resident-size ceiling long before
+		// that is comfortable.
+		err = database.verifyBytes(data)
+	} else {
+		err = database.verify(temp)
+	}
+	if err != nil {
 		_ = os.Remove(temp)
 		return false, err
 	}
@@ -219,6 +227,9 @@ func installDatabase(database geoDatabase) (skipped bool, err error) {
 		return false, err
 	}
 	database.reload()
+	// The parse above is the largest allocation in this function; hand it back
+	// instead of letting it sit next to whatever the reload just mapped.
+	debug.FreeOSMemory()
 	return false, nil
 }
 

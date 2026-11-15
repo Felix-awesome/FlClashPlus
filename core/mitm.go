@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -25,9 +25,19 @@ var (
 	mitmWatchdogOnce sync.Once
 )
 
-// mitmWatchdogInterval is how often the footprint is reported while rewriting
-// is on. Two minutes keeps the app log readable while still showing a trend.
-const mitmWatchdogInterval = 2 * time.Minute
+// How often the footprint is reported while rewriting is on.
+//
+// Two minutes was too coarse to see anything: the extension dies within seconds
+// of installing a rule set, so the window has to be shorter than the failure,
+// not longer. Two seconds for the first minute -- the window every kill has
+// happened in -- then every half minute, because a session that runs for hours
+// would otherwise fill the log with nothing but footprint lines and push out
+// the lines that say what happened.
+const (
+	mitmWatchdogFastInterval = 2 * time.Second
+	mitmWatchdogSlowInterval = 30 * time.Second
+	mitmWatchdogFastSamples  = 30
+)
 
 // startMitmWatchdog reports the core's footprint while interception is on.
 //
@@ -36,26 +46,27 @@ const mitmWatchdogInterval = 2 * time.Minute
 // simply stops and the VPN badge disappears. These numbers are what tells that
 // apart from a crash: a heap that climbs towards the budget is a leak, a heap
 // that stays flat and a tunnel that still stops is a fault.
+//
+// The line is written with bootLogMemory rather than the log package: mihomo's
+// log is filtered to warnings on its way into the startup log, so an Infoln
+// here produced no output at all (see bootLogMemory).
 func startMitmWatchdog() {
 	mitmWatchdogOnce.Do(func() {
 		go func() {
-			ticker := time.NewTicker(mitmWatchdogInterval)
+			ticker := time.NewTicker(mitmWatchdogFastInterval)
 			defer ticker.Stop()
+			samples := 0
 			for range ticker.C {
 				mitmMu.Lock()
 				enabled := mitmEnabled
 				mitmMu.Unlock()
-				if !enabled {
-					continue
+				if enabled {
+					bootLogMemory("mitm watchdog")
 				}
-				var stats runtime.MemStats
-				runtime.ReadMemStats(&stats)
-				log.Infoln(
-					"[MITM] heap %d MB, resident %d MB, goroutines %d",
-					stats.HeapAlloc>>20,
-					stats.Sys>>20,
-					runtime.NumGoroutine(),
-				)
+				samples++
+				if samples == mitmWatchdogFastSamples {
+					ticker.Reset(mitmWatchdogSlowInterval)
+				}
 			}
 		}()
 	})
@@ -117,6 +128,16 @@ func handleSetMitm(params *SetMitmParams) error {
 		return fmt.Errorf("missing set-mitm params")
 	}
 
+	bootLogMemory("setMitm begin (enable=" + fmt.Sprint(params.Enable) + ")")
+	defer func() {
+		// The CA generation, the rule set and the TLS machinery are all
+		// allocated here, and this is one of the two steps the extension has
+		// been seen to die in. Give the pages back before returning rather than
+		// leaving them for a GC that may not run inside the budget.
+		debug.FreeOSMemory()
+		bootLogMemory("setMitm done (enable=" + fmt.Sprint(params.Enable) + ")")
+	}()
+
 	var ca *mitm.CA
 	if params.Enable {
 		loaded, err := loadMitmCA()
@@ -165,6 +186,18 @@ func handleUpdateMitmRules(params *UpdateMitmRulesParams) error {
 	if params == nil {
 		return fmt.Errorf("missing update-mitm-rules params")
 	}
+
+	// This is the step the extension has died in three times: the app sends the
+	// rule set over the file bridge, this compiles it, and the process either
+	// comes back with an answer or never does. The two lines bracket the work
+	// so a kill inside it leaves the "begin" without a matching "done", and the
+	// numbers say whether the heap moved.
+	bootLogMemory(fmt.Sprintf("mitm rules begin (%d bytes, %d scripts)",
+		len(params.Rules), len(params.Scripts)))
+	defer func() {
+		debug.FreeOSMemory()
+		bootLogMemory("mitm rules done")
+	}()
 
 	parsed, errs := mitm.Parse(params.Rules)
 	if len(errs) > 0 {
