@@ -97,16 +97,12 @@ import NetworkExtension
     }
 
     private func checkProvider(of manager: NETunnelProviderManager) {
-        let status = manager.connection.status
-        guard status == .connected else {
-            // Connecting is not a failure yet, and a tunnel being torn down by
-            // the user must not be resurrected here.
-            if status != .connecting && status != .reasserting
-                && status != .disconnecting {
-                stopProviderWatchdog()
-            }
-            return
-        }
+        // Only a connected tunnel can hide a dead provider: while connecting
+        // there is no core yet, and a tunnel on its way down is the user's stop
+        // doing its job. Everything else is left alone -- a stray 3-second stat
+        // costs nothing, while disarming here would leave a restarted tunnel
+        // unwatched, because the restart passes through "disconnected".
+        guard manager.connection.status == .connected else { return }
         guard Self.providerLiveness().isDead else { return }
         Self.log("watchdog: the tunnel is connected but its provider is gone; restarting")
         restartReapedTunnel(manager)
@@ -157,6 +153,9 @@ import NetworkExtension
                         let elapsed = String(
                             format: "%.1fs", Date().timeIntervalSince(started))
                         Self.log("watchdog: tunnel restarted in " + elapsed)
+                        // Re-armed here as well, because the restart is exactly
+                        // the moment the old provider's fate could repeat.
+                        self.startProviderWatchdog()
                     } catch {
                         Self.log("watchdog: restart threw: "
                             + error.localizedDescription)

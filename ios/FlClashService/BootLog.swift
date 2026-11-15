@@ -113,7 +113,8 @@ enum BootLog {
     /// before the log stops is the number the process died at.
     static func writeMemory(_ step: String) {
         guard let footprint = footprintMiB() else { return }
-        write(String(format: "mem: %@: footprint %.1f MiB", step, footprint))
+        write("mem: " + step + ": footprint "
+            + String(format: "%.1f", footprint) + " MiB")
     }
 }
 
